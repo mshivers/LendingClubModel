@@ -25,17 +25,49 @@ if 'df' not in locals().keys():
 
     first = g_id.first()
     print 'After first()', (now() - t).total_seconds()
-loan_amt = first['PBAL_BEG_PERIOD']
-loan_amt.name = 'loan_amt'
+    loan_amt = first['PBAL_BEG_PERIOD']
+    loan_amt.name = 'loan_amt'
 
-if 'loan_amt' not in df.columns:
-    df = df.join(loan_amt, on='LOAN_ID')
-    df['prepay_pct'] = df['prepay_amt'] / df['loan_amt']
+    if 'loan_amt' not in df.columns:
+        df = df.join(loan_amt, on='LOAN_ID')
+        df['prepay_pct'] = df['prepay_amt'] / df['loan_amt']
+df['issue_year'] = df['IssuedDate'].apply(lambda x: int(x[-4:]))
+prepays = df.ix[df.issue_year>2012].pivot(index='LOAN_ID', columns='MOB', values='prepay_pct') 
+# combine all payments for MOB=0 (a very small number of prepayments before the first payment is due) with MOB=1
+prepays[1] = prepays[1] + prepays[0].fillna(0)
+del prepays[0]
 
-prepays = df.pivot(index='LOAN_ID', columns='MOB', values='prepay_pct') 
-prepays = prepays.fillna(0)
+prepays = prepays.join(first[['term', 'grade']])
+#combine E, F & G (there's not many of them
+prepays['grade'] = prepays['grade'].apply(lambda x: min(x, 'E'))
+
+mean_prepays = prepays.groupby(['term', 'grade']).mean()
+
+for N in [36, 60]:
+    plt.figure()
+    for i, r in mean_prepays.iterrows():
+        if i[0]==N:
+            plt.plot(r.cumsum()[:N])
+    plt.legend(list('ABCDEFG'), loc=2)
+    plt.title(N)
+    plt.grid()
+    plt.show()
 
 print 'After prepay pivot', (now() - t).total_seconds()
+for N in [36, 60]:
+    plt.figure()
+    for i, r in mean_prepays.iterrows():
+        if N == i[0]:
+            win = 19 if N==36 else 29 
+            empirical_prepays = r[:N].values
+            smoothed_prepays = scipy.signal.savgol_filter(empirical_prepays, win , 3)
+            smoothed_prepays = np.maximum(0, smoothed_prepays) 
+            #plt.plot(empirical_prepays, 'b')
+            plt.plot(smoothed_prepays)
+    plt.title(N)
+    plt.legend(list('ABCDEFG'), loc=1)
+    plt.grid()
+    plt.show()
 
 1/0
 data = first[['PBAL_BEG_PERIOD', 'InterestRate', 'MONTHLYCONTRACTAMT', 
