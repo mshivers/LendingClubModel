@@ -1,0 +1,62 @@
+New Feature Ideas:
+
+Add a feature that estimates the log odds, by clean_title, that the borrower will default given a payment is late; are there some titles that pay late a lot but rarely default?  Or are the two metrics correlated the same amount regardless of conditioning on clean_title?
+
+For the title log odds model, start by estimating a prior for low-count strings: take all strings and calculate the log-odds for the set that contains only the first 100 instances (or however many exist, if less than 100).  Use this as the prior in the actual calculation instead of 0. 
+
+Build a model that forecasts the total loan ROI. 
+For current loans, assume the remaining loan payments will default at a rate determined by the current fico score.  
+Estimate this from the already-defaulted loans.
+
+Write up the data flow for all external data sources, and build a script that assembles all necessary data in an array indexed by zip3 code to be the sole data import.
+Write up the update schedule for all data sources.
+
+Think about how to fix the issue month feature.  We're using all default data up to 2 months ago, so current month will be, on average, older than most other months and will appear to default more.  Not sure this is a problem, since we're only estimating default for current month notes...
+
+
+
+Previous Results:
+New Feature Ideas
+To treat 36-month and 60-month loans similarly, perhaps the training data should try to predict default withing x% of maturity (e.g. 9 months for 3yr debt and 15 months for 5yr debt).  That way, as long as the hazard rates decline at the same rate, we should get an unbiased alpha.  Right now the 5yr bond alphas are biased up relative to 3yr bonds.
+
+Add median income from census bureau -- no influence
+
+Add difference between borrower income and median income -- borrower income % median income is a good feature.
+
+Add House Price Appreciation 1yr, 5yr, decline from max.
+ - 1year hpa seems to have the cleanest relationship to default on the entire dataset,
+   but hpa is so skewed in the dataset that most of the positive hpa4q>0 items are from 
+   newly issued bonds, so the trees are over-interpreting that as low default risk.  Look 
+   to add the feature when we have more data.
+
+Look at the rejected loans file on lending club, and see what can be added.  
+ - percentage of loans within as zip3 code that are rejected - this doesn't
+   seem to be correlated with defaults...
+ - percentage of loans by zip that were rejected recently
+ - percentage of loans that are rejected each calendar month
+ - recent change in rejection rate by zip
+
+Look for IRS data on percentage of income given to charity, and add as zip3 feature.
+-- no relationship at all between charity and defaults.
+
+
+Below shows the influence of the first decimal digit of the loan's interest rate:
+In [58]: g = df.groupby(df['int_rate'].apply(lambda x:np.floor(10*np.mod(x,1))))
+In [59]: g.mean()['24m_late']
+Out[59]:
+int_rate
+0.0000     0.0698
+1.0000     0.0549
+2.0000     0.0841
+3.0000     0.0612
+4.0000     0.0617
+5.0000     0.0552
+6.0000     0.0399
+7.0000     0.1110
+8.0000     0.0945
+9.0000     0.0345
+Name: 24m_late, dtype: float64
+
+
+
+Add feature for monthly payment as a percentage of monthly income.

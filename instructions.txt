@@ -1,0 +1,17 @@
+download updated LendingClub data (log in first to get the full dataset)
+
+Update employment data:
+    run get_bls_data.py
+    run bls_by_3zip.by
+ 
+run construct_datasets.py to update house-price data
+
+in lclib, update the oos_cutoff date at the top of the file
+
+update the log odds json files:
+in iPython:
+    import lclib
+    run lclib.create_clean_title_log_odds_json()
+    run lclib.create_capitalization_log_odds_json()
+
+run build_random_forest.py
