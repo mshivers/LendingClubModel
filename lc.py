@@ -2,7 +2,9 @@ from lendingclub import LendingClub, LendingClubError
 from lendingclub.filters import SavedFilter
 from datetime import datetime as dt, timedelta as td
 from time import sleep
+from collections import defaultdict
 import numpy as np
+import pandas as pd
 import os
 import copy
 import random_forest_model as rfm
@@ -44,63 +46,6 @@ def stage_order_fast(lc, id, amount):
             amount_staged = amount
     return amount_staged 
 
-def stage_orders(lc, loans, amount):
-    # Stage each loan
-    if isinstance(loans, dict):
-        loans = [loans]
-
-    for loan in loans: 
-        payload = {
-            'method': 'addToPortfolio',
-            'loan_id': loan['id'],
-            'loan_amount': amount,
-            'remove': 'false'
-        }
-        response = lc.session.get('/data/portfolio', query=payload)
-        json_response = response.json()
-
-        # Ensure it was successful before moving on
-        if not lc.session.json_success(json_response):
-            raise LendingClubError('Could not stage loan {0} on the order: {1}'.format(loan_id, response.text), response)
-        else:
-            print '{}: Staged ${} for order id = {}'.format(dt.now(), amount, loan['id'])
-
-    #
-    # Add all staged loans to the order
-    #
-    payload = {
-        'method': 'addToPortfolioNew'
-    }
-    response = lc.session.get('/data/portfolio', query=payload)
-    json_response = response.json()
-    if lc.session.json_success(json_response):
-        return True
-    else:
-        raise LendingClubError('Could not add loans to the order', response.text)
-
-
-def add_to_order(lc, loan_id, loan_amt):
-    '''
-    Adds a new investment to the Order.  
-    This stages is in Lending Club's Order, hence reserving that amount, which you can cancel later.
-    '''
-    payload = { 'loan_id': loan_id,
-                'loan_amount': loan_amt }
-    response = lc.session.post('/browse/addToPortfolio.action', data=payload)
-    return response 
-
-
-def remove_from_portfolio(lc, loan_id):
-    # Trying to get this to work; just guessing how to do this...
-    payload = { 'method':'removeFromPortfolio',
-                'loan_id':loan_id,
-                'remove':True}
-    response = lc.session.get('/data/portfolio', data=payload)
-    return response
-
-
-def get_newly_listed_loans(new_loans, known_loans):
-    return [l['id'] for l in new_loans if l['id'] not in known_loans.keys()]
 
 def get_staged_employer_data(lc, known_loans):
     print '\n'
@@ -112,71 +57,56 @@ def get_staged_employer_data(lc, known_loans):
                 print '{} at {}'.format(loan['currentJobTitle'], loan['currentCompany'])
     print '\n'
 
+
 def calc_model_sensitivities(loans):
     for loan in loans:
         loancopy = copy.deepcopy(loan)
         loancopy['clean_title_log_odds'] = 0
-        loan['dflt_ctlo_zero'] = rfm.default_risk(loancopy)        
+        loan['dflt_ctlo_zero'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['capitalization_log_odds'] = 0
-        loan['dflt_caplo_zero'] = rfm.default_risk(loancopy)        
+        loan['dflt_caplo_zero'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
-        loancopy['HPA1Yr'] = 0
-        loan['dflt_hpa1y_zero'] = rfm.default_risk(loancopy)        
+        loancopy['HPA1Yr'] = -5.0 
+        loan['dflt_hpa1y_neg5pct'] = rfm.calc_default_risk(loancopy)        
+        loancopy['HPA1Yr'] = 0 
+        loan['dflt_hpa1y_zero'] = rfm.calc_default_risk(loancopy)        
         loancopy['HPA1Yr'] = 5.0
-        loan['dflt_hpa1y_5pct'] = rfm.default_risk(loancopy)        
+        loan['dflt_hpa1y_5pct'] = rfm.calc_default_risk(loancopy)        
         loancopy['HPA1Yr'] = 10.0
-        loan['dflt_hpa1y_10pct'] = rfm.default_risk(loancopy)        
-
-        loancopy = copy.deepcopy(loan)
-        loancopy['clean_title_rank'] = 100
-        loan['dflt_clean_title_rank_100'] = rfm.default_risk(loancopy)        
-        loancopy['clean_title_rank'] = 999999 
-        loan['dflt_clean_title_rank_large'] = rfm.default_risk(loancopy)        
+        loan['dflt_hpa1y_10pct'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['avg_urate'] = 0.03
         loancopy['urate'] = 0.03 
-        loan['dflt_urate_3pct'] = rfm.default_risk(loancopy)        
+        loan['dflt_urate_3pct'] = rfm.calc_default_risk(loancopy)        
         loancopy['avg_urate'] = 0.08
         loancopy['urate'] = 0.08 
-        loan['dflt_urate_8pct'] = rfm.default_risk(loancopy)        
+        loan['dflt_urate_8pct'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['urate_chg'] = 0.02
-        loan['dflt_urate_chg_2pct'] = rfm.default_risk(loancopy)        
+        loan['dflt_urate_chg_2pct'] = rfm.calc_default_risk(loancopy)        
         loancopy['urate_chg'] = -0.02
-        loan['dflt_urate_chg_neg2pct'] = rfm.default_risk(loancopy)        
-
-        loancopy = copy.deepcopy(loan)
-        loancopy['urate_range'] = 0.04
-        loan['dflt_urate_range_4pct'] = rfm.default_risk(loancopy)        
-
-        loancopy = copy.deepcopy(loan)
-        loancopy['credit_length'] = 5.0
-        loan['dflt_credit_length_5yrs'] = rfm.default_risk(loancopy)        
-
-        loancopy = copy.deepcopy(loan)
-        loancopy['emp_length'] = 0
-        loan['dflt_emp_length_zero'] = rfm.default_risk(loancopy)        
+        loan['dflt_urate_chg_neg2pct'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['home_status_number'] = lclib.home_map['RENT']
-        loan['dflt_rent'] = rfm.default_risk(loancopy)        
+        loan['dflt_rent'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['home_status_number'] = lclib.home_map['MORTGAGE']
-        loan['dflt_mortgage'] = rfm.default_risk(loancopy)        
+        loan['dflt_mortgage'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['home_status_number'] = lclib.home_map['OWN']
-        loan['dflt_own'] = rfm.default_risk(loancopy)        
+        loan['dflt_own'] = rfm.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['even_loan_amount'] = int(not loan['even_loan_amount']) 
-        loan['dflt_not_even_loan_amount'] = rfm.default_risk(loancopy)        
+        loan['dflt_not_even_loan_amount'] = rfm.calc_default_risk(loancopy)        
 
     return
 
@@ -214,6 +144,7 @@ def add_to_known_loans(known_loans, new_loans):
             l['max_stage_amount'] = 0
             l['staged_amount'] = 0
             l['default_risk'] = 100
+            l['irr'] = -100
             l['alpha'] = -100
             l['search_time'] = dt.now()
             l['inputs_parsed'] = False 
@@ -225,8 +156,10 @@ def add_to_known_loans(known_loans, new_loans):
             new_ids.append(l['id'])
     return known_loans, new_ids 
 
+
 def sort_by_model_priority(loans, min_rate):
     return sorted(loans, key=lambda x: (x['int_rate']<=min_rate, np.floor(x['clean_title_log_odds']), x['loanAmount']))
+
 
 def sort_by_int_rate(loans):
     return sorted(loans, key=lambda x: x['int_rate'])
@@ -243,6 +176,25 @@ def get_loans_to_evaluate(known_loans):
             if retry_stage or retry_model: 
                 loans_to_evaluate.append(l)
     return loans_to_evaluate
+
+def update_recent_loan_info(known_loans, info):
+    irr_list = list()
+    irr_by_grade = defaultdict(lambda :list())
+    irr_data = list()
+    for l in known_loans.values():
+        if l['irr'] > -100:
+            elapsed = (dt.now()-l['search_time']).total_seconds()
+            if elapsed < 600:
+                irr_list.append(l['irr']) 
+                irr_by_grade[l['grade']].append(l['irr'])
+                irr_data.append((l['grade'], l['initialListStatus'], l['irr']))
+
+    info['average_irr'] = np.mean(irr_list)
+    info['irr_by_grade'] = irr_by_grade
+
+    col_names = ['grade', 'initialListStatus', 'irr']
+    info['irr_df'] = pd.DataFrame(data=irr_data, columns=col_names)
+    return
 
 def get_loans_to_save(known_loans):
     loans_to_save = list()
@@ -282,22 +234,17 @@ def attempt_to_stage(lc, known_loans):
 
 def login(lc_ira, lc_tax):
     import getpass
-    #emails = {0:('Taxable','marc.shivers@gmail.com'), 1:('IRA','marcshivers@gmail.com')}
-    #for k,v in emails.iteritems():
-    #    print k, v
-    #acct = int(raw_input('Which account do you want to log in to?  '))
-    #acct_type, email = emails[acct]
+
     pw = getpass.getpass('Password:')
     print '\nLogging in...'
     lc_ira.authenticate(email='marcshivers@gmail.com', password=pw)
     lc_tax.authenticate(email='marc.shivers@gmail.com', password=pw)
 
-    #return email, acct_type
 
 lc_ira = LendingClub()
 lc_tax = LendingClub()
 
-def main(min_alpha=11, max_invest=500):
+def main(min_irr=11, max_invest=500):
     init_dt = dt.now() 
     known_loans = dict()
 
@@ -323,7 +270,7 @@ def main(min_alpha=11, max_invest=500):
         
         num_newly_staged = 0
         loans_to_evaluate = get_loans_to_evaluate(known_loans)
-        loans_to_evaluate = sort_by_model_priority(loans_to_evaluate, min_alpha+2)
+        loans_to_evaluate = sort_by_model_priority(loans_to_evaluate, min_irr+2)
         for loan in loans_to_evaluate:
 
             #Parse inputs and add features
@@ -334,15 +281,21 @@ def main(min_alpha=11, max_invest=500):
             if loan['inputs_parsed']==True: 
                 #Run risk model
                 if loan['model_run']==False:
-                    loan['default_risk'] = rfm.default_risk(loan)        
+
+                    rfm.calc_default_risk(loan)        
+                    lclib.calc_npv(loan, min_irr/100.)
 
                     # the mults below are empirical estimates from 2010 loans 
                     # for total loss percentages as a mult of year 1 defaults.
                     mult = 1.14 if loan['loan_term']==36 else 1.72 
                     loan['alpha'] = loan['int_rate'] - mult * loan['default_risk']
-                    loan['max_stage_amount'] = lclib.invest_amount(loan['alpha'], 
-                                                                   min_alpha=min_alpha, 
+                    loan['max_stage_amount'] = lclib.invest_amount(100*loan['irr'], 
+                                                                   min_irr=min_irr, 
                                                                    max_invest=max_invest) 
+                    # Don't invest in loans that were already passed over as whole loans
+                    if loan['initialListStatus']=='W':
+                        loan['max_stage_amount'] = 0
+
                     loan['model_run']=True
 
 
@@ -368,6 +321,7 @@ def main(min_alpha=11, max_invest=500):
                 print '\n{}:\n{}\n'.format(dt.now(), lclib.detail_str(loan))
         
         if len(new_ids)==0:   # get employer data if no new loans
+            update_recent_loan_info(known_loans, info)
             staged_loans = get_recently_staged(known_loans) 
             if np.any([l['email_details'] for l in staged_loans]): 
                 print 'Staged Loan Employers:'

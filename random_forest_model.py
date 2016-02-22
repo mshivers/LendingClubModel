@@ -146,7 +146,7 @@ def parse_loan_details(dtl):
     return dtl
 
 
-def default_risk(dtl):
+def calc_default_risk(dtl):
     try:
         x = np.zeros(25) * np.nan
 
@@ -207,7 +207,12 @@ def default_risk(dtl):
         x[23] = dtl['urate_range'] 
         x[24] = dtl['HPA1Yr'] 
 
-        risk = 100.0 * prod_forest.predict(x)[0]
+        predictions = [tree.predict(x)[0] for tree in prod_forest.estimators_]
+        dtl['default_risk'] = 100.0 * np.mean(predictions) 
+        #get bootstrap estimates for default mean estimator 
+        bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
+        dtl['default_max'] = 100 * np.max(bootstrap_means)
+        dtl['default_std'] = 100 * np.std(bootstrap_means)
     
     except Exception as e:
         msg = 'Error in random_forest_model.py::default_risk()'
@@ -219,9 +224,11 @@ def default_risk(dtl):
         msg += '\n\n'
         print msg
         print zip(range(len(x)), x)
-        risk = 100.0
+        dtl['default_risk'] = 100.0
+        dtl['default_max'] = 100 
+        dtl['default_std'] = 0
    
-    return risk 
+    return 
 
 
 def default_risk_old(dtl):

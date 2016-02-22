@@ -13,7 +13,99 @@ import json
 import os
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
+parent_dir = '/Users/marcshivers/LCModel'
+#default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
+#prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
+
+
+all_grades = list('ABCDEFG')
+
+for term in [36,60]:
+    plt.figure()
+    for grade in all_grades:
+        data = default_curves['{}{}'.format(grade,term)]
+        C = default_curves['D{}'.format(term)]
+        C = np.r_[C[0], np.diff(np.array(C))]
+        data = np.r_[data[0], np.diff(np.array(data))]  
+        plt.plot(data)
+    plt.title('Term: {}'.format(term))
+    plt.legend(all_grades)
+    plt.grid()
+    plt.show()
+
+
+def make_loan(grade, term, rate, amount):
+    pmt = np.pmt(rate/1200., term, amount)
+    return dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
+        ('loan_amount', amount), ('int_rate', rate)])
+
+
+
+
+def calc_npv(l, discount_rate=0.10):
+    ''' All calculations assume a loan amount of $1.
+    Note the default curves are the cumulative percent of loans that have defaulted prior 
+    to month m; the prepayment curves are the average percentage of outstanding balance that is prepaid 
+    each month (not cumulative) where the average is over all loans that have not yet matured (regardless 
+    of prepayment or default).  We'll assume that the prepayments are in full'''
+
+    net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
+
+    key = '{}{}'.format(min('E', l['grade']), l['term']) 
+    print key
+    prepay_rate = np.array(prepay_curves[key])
+    base_defaults = np.array(default_curves[key])
+    
+    risk_factor = 1.5
+    cdefaults = (risk_factor * np.r_[base_defaults[:1],np.diff(base_defaults)]).cumsum()
+    #prepay_rate[:] = 0
+    #cdefaults[:] = 0
+
+    monthly_int_rate = l['int_rate']/1200.
+    monthly_discount_rate = (1 + discount_rate) ** (1/12.) - 1
+    monthly_payment = l['monthly_payment'] / l['loan_amount']
+
+    # start with placeholder for time=0 investment for irr calc later
+    payments = np.zeros(l['term']+1)
+    
+    principal_balance = 1
+    # add monthly payments
+    for m in range(1, l['term']+1):
+
+        interest_due = principal_balance * monthly_int_rate
+        principal_due = monthly_payment - interest_due
+
+        # prepayment rate is a pct of ending balance
+        principal_balance -= principal_due
+        prepayment_amt = principal_balance * prepay_rate[m-1]
+        
+        scheduled_amt = monthly_payment * (1 - cdefaults[m-1])
+        payments[m] = prepayment_amt + scheduled_amt
+        
+        # reduce monthly payment to reflect this month's prepayment
+        principal_balance -= prepayment_amt
+        monthly_payment *= (1 - prepay_rate[m-1])
+
+
+    # reduce payments by lending club service charge
+    payments *= net_payment_pct
+    npv = np.npv(monthly_discount_rate, payments) 
+
+    # Add initial investment outflow at time=0 to calculate irr: 
+    payments[0] += -1
+    irr = np.irr(payments)
+    
+    l['irr'] = -1 + (1 + irr) ** 12
+    l['npv'] = 100 * npv    
+
+    return l, base_defaults, cdefaults 
+    
+
+
+
+'''
 hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
 
 
@@ -22,7 +114,6 @@ hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
 
 
 
-'''
 fld = 'clean_title'
 grp = df[['wgt_default', fld]].groupby(fld)
 d = [i for i in zip(grp.count().index, grp.count().values.squeeze(), grp.mean().values.squeeze()) if i[1]>50]

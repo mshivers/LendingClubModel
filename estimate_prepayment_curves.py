@@ -23,15 +23,15 @@ if 'df' not in locals().keys():
     g_id = df.groupby('LOAN_ID')
     print 'After groupby by ID', (now() - t).total_seconds()
 
-    first = g_id.first()
     last = g_id.last()
-    print 'After first()', (now() - t).total_seconds()
-    loan_amt = first['PBAL_BEG_PERIOD']
-    loan_amt.name = 'loan_amt'
+    first = g_id.first()
+    print 'After last()', (now() - t).total_seconds()
 
-    if 'loan_amt' not in df.columns:
-        df = df.join(loan_amt, on='LOAN_ID')
-        df['prepay_pct'] = df['prepay_amt'] / df['loan_amt']
+        
+    df['bal_before_prepayment'] = df['PBAL_END_PERIOD'] + np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
+
+    # denominator is to deal with the corner case when the last payment month has a stub payment
+    df['prepay_pct'] = df['prepay_amt'] / np.maximum(df['DUE_AMT'], df['bal_before_prepayment'])
     df['issue_year'] = df['IssuedDate'].apply(lambda x: int(x[-4:]))
     prepays = df.pivot(index='LOAN_ID', columns='MOB', values='prepay_pct') 
 
@@ -39,9 +39,15 @@ if 'df' not in locals().keys():
     prepays[1] = prepays[1] + prepays[0].fillna(0)
     del prepays[0]
 
-    prepays = prepays.join(last[['term', 'grade', 'IssuedDate', 'MOB']])
-    #combine E, F & G (there's not many of them
-    prepays['grade'] = prepays['grade'].apply(lambda x: min(x, 'E'))
+    join_cols = ['term', 'grade', 'IssuedDate', 'MOB', 'dti', 'HomeOwnership', 'MonthlyIncome', 'EmploymentLength']
+    prepays = prepays.join(last[join_cols])
+
+    loan_amount = first['PBAL_BEG_PERIOD']
+    loan_amount.name = 'loan_amount'
+    prepays = prepays.join(loan_amount)
+
+    #combine E, F & G (there's not many of them)
+    prepays['grade'] = prepays['grade'].apply(lambda x: min(x, 'G'))
 
     prepays = prepays.sort('IssuedDate')
     for d in set(prepays['IssuedDate'].values):
@@ -51,66 +57,72 @@ if 'df' not in locals().keys():
         print d, max_mob
         print prepays.ix[idx, :max_mob].sum(0)
 
-    mean_prepays = prepays.groupby(['term', 'grade']).mean()
+    g_prepays = prepays.groupby(['term', 'grade'])
+
+    prepays['low_dti'] = g_prepays['dti'].apply(lambda x: x<x.mean())
+    prepays['small_loan'] = g_prepays['loan_amount'].apply(lambda x: x<5000)
+g2_prepays = prepays.groupby(['term', 'grade'])
+mean_prepays = g2_prepays.mean()
+
+all_grades = list('ABCDEFG')
+
+'''
+for t in [36,60]:
+    for g in all_grades:
+        plt.figure()
+        data = (mean_prepays.ix[(t,g,False)] - mean_prepays.ix[(t,g,True)])
+        data[:t].plot()
+        plt.title('{}, {}'.format(t,g))
+        plt.show()
 
 for N in [36, 60]:
-    plt.figure()
-    for i, r in mean_prepays.iterrows():
-        if i[0]==N:
-            plt.plot(r.cumsum()[:N])
-    plt.legend(list('ABCDEFG'), loc=2)
-    plt.title(N)
-    plt.grid()
-    plt.show()
+    for g in all_grades:
+        plt.figure()
+        legend = list()
+        for i, r in mean_prepays.iterrows():
+            if i[0]==N and i[1]==g:
+                legend.append(', '.join([str(k) for k in i]))
+                plt.plot(r[:N])
+        plt.legend(legend, loc=2)
+        plt.title(N)
+        plt.grid()
+        plt.show()
+
+'''
 
 print 'After prepay pivot', (now() - t).total_seconds()
+# we are using the empirical first-month prepayment (it's often much higher than 
+# nearby months), then we'll smooth the later prepayment rates
+prepay_curves = dict()
+begin_smooth = 0
 for N in [36, 60]:
-    plt.figure()
     for i, r in mean_prepays.iterrows():
         if N == i[0]:
-            win = 19 if N==36 else 29 
+            win = 7 if N==36 else 13 
             empirical_prepays = r[:N].values
-            smoothed_prepays = scipy.signal.savgol_filter(empirical_prepays, win , 3)
+            smoothed_prepays = scipy.signal.savgol_filter(empirical_prepays[begin_smooth:], win , 3)
             smoothed_prepays = np.maximum(0, smoothed_prepays) 
-            #plt.plot(empirical_prepays, 'b')
-            plt.plot(smoothed_prepays)
-    plt.title(N)
-    plt.legend(list('ABCDEFG'), loc=1)
-    plt.grid()
-    plt.show()
-
-prepay_curves = dict()
-for i, r in mean_prepays.iterrows():
-    N = i[0]
-    win = 19 if N==36 else 29 
-    empirical_prepays = r[:N+1].values
-    smoothed_prepays = scipy.signal.savgol_filter(empirical_prepays, win , 3)
-    smoothed_prepays = np.maximum(0, smoothed_prepays) 
-    prepay_curves['{}{}'.format(i[1], i[0])] = list(np.cumsum(smoothed_prepays))
-    plt.figure()
-    plt.plot(empirical_prepays, 'b')
-    plt.plot(smoothed_prepays, 'r')
-    plt.title(i)
-    plt.grid()
-    plt.show()
-
-
-for grade in list('ABCDE'):
-    plt.figure()
-    plt.plot(prepay_curves['{}60'.format(grade)], 'b')
-    plt.plot(prepay_curves['{}36'.format(grade)], 'r')
-    plt.title(grade)
-    plt.grid()
-    plt.show()
+            smoothed_prepays = np.r_[empirical_prepays[:begin_smooth], smoothed_prepays]
+            prepay_curves['{}{}'.format(i[1], i[0])] = list(smoothed_prepays)
+           
+            plt.figure()
+            plt.plot(empirical_prepays, 'b')
+            plt.plot(smoothed_prepays, 'g')
+            plt.title(str(i))
+            plt.grid()
+            plt.show()
+            
 
 for term in [36,60]:
     plt.figure()
-    for grade in list('ABCDE'):
+    for grade in all_grades:
         plt.plot(prepay_curves['{}{}'.format(grade,term)])
     plt.title('Term: {}'.format(term))
+    plt.legend(all_grades, loc=2)
     plt.grid()
     plt.show()
 
+
+
+
 json.dump(prepay_curves, open('/Users/marcshivers/LCModel/prepay_curves.json', 'w'), indent=4)
-
-

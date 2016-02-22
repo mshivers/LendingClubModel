@@ -73,45 +73,46 @@ if 'df' not in locals().keys():
     defaults = pd.DataFrame(data=defaults, index=index, columns=cols).reset_index()   
     issued = pd.DataFrame(data=issued, index=index, columns=cols).reset_index()    
 
-    defaults['grade'] = np.minimum(defaults['grade'], 'E')
-    issued['grade'] = np.minimum(issued['grade'], 'E')
+    defaults['grade'] = np.minimum(defaults['grade'], 'G')
+    issued['grade'] = np.minimum(issued['grade'], 'G')
 
     g_default = defaults.groupby(['term', 'grade']).sum()
     g_issued = issued.groupby(['term', 'grade']).sum()
     default_rates = (g_default / g_issued).ix[:, 0:]
 
-    default_curves = dict()
-    for i, r in default_rates.iterrows():
-        N = i[0]
-        win = 19 if N==36 else 29 
-        empirical_default = r[:N+1].values
-        smoothed_default = scipy.signal.savgol_filter(empirical_default, win , 3)
-        smoothed_default = np.maximum(0, smoothed_default) 
-        default_curves['{}{}'.format(i[1], i[0])] = list(np.cumsum(smoothed_default))
-        plt.figure()
-        plt.plot(empirical_default, 'b')
-        plt.plot(smoothed_default, 'r')
-        plt.title(i)
-        plt.grid()
-        plt.show()
+default_curves = dict()
+for i, r in default_rates.iterrows():
+    N = i[0]
+    win = 19 if N==36 else 29 
+    empirical_default = r[:N+1].values
+    smoothed_default = scipy.signal.savgol_filter(empirical_default, win , 3)
+    smoothed_default = np.maximum(0, smoothed_default) 
+    default_curves['{}{}'.format(i[1], i[0])] = list(np.cumsum(smoothed_default))
+    plt.figure()
+    plt.plot(empirical_default, 'b')
+    plt.plot(smoothed_default, 'r')
+    plt.title(i)
+    plt.grid()
+    plt.show()
 
 
-    for grade in list('ABCDE'):
-        plt.figure()
-        plt.plot(default_curves['{}60'.format(grade)], 'b')
-        plt.plot(default_curves['{}36'.format(grade)], 'r')
-        plt.title(grade)
-        plt.grid()
-        plt.show()
+all_grades = list('ABCDEFG')
+for grade in all_grades:
+    plt.figure()
+    plt.plot(default_curves['{}60'.format(grade)], 'b')
+    plt.plot(default_curves['{}36'.format(grade)], 'r')
+    plt.title(grade)
+    plt.grid()
+    plt.show()
 
-    for term in [36,60]:
-        plt.figure()
-        for grade in list('ABCDE'):
-            plt.plot(default_curves['{}{}'.format(grade,term)])
-        plt.title('Term: {}'.format(term))
-        plt.grid()
-        plt.show()
+for term in [36,60]:
+    plt.figure()
+    for grade in all_grades:
+        plt.plot(default_curves['{}{}'.format(grade,term)])
+    plt.title('Term: {}'.format(term))
+    plt.grid()
+    plt.show()
 
-    json.dump(default_curves, open('/Users/marcshivers/LCModel/default_curves.json', 'w'), indent=4)
+json.dump(default_curves, open('/Users/marcshivers/LCModel/default_curves.json', 'w'), indent=4)
 
 

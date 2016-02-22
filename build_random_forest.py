@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 import os
 import json
 from lclib import parent_dir, load_training_data, calc_log_odds, tokenize_capitalization
-from lclib import oos_cutoff
+from lclib import oos_cutoff, construct_loan_dict, calc_npv
 
 if 'df' not in locals().keys():
     df = load_training_data()
@@ -96,8 +96,8 @@ if 'urate' not in df.columns:
     odds_map = lambda x: calc_log_odds(x, caploC, 4)
     df['caploC'] = df['title_capitalization'].apply(odds_map)
     
-df['cur_bal-loan_amnt'] = df['tot_cur_bal'] - df['loan_amnt'] 
-df['cur_bal_pct_loan_amnt'] = df['tot_cur_bal'] / df['loan_amnt'] 
+    df['cur_bal-loan_amnt'] = df['tot_cur_bal'] - df['loan_amnt'] 
+    df['cur_bal_pct_loan_amnt'] = df['tot_cur_bal'] / df['loan_amnt'] 
 
 
 # decision variables: 
@@ -146,14 +146,11 @@ dv = ['loan_amnt',
     ]
 
 iv = '12m_wgt_default'
-extra_cols = [iv, 'issue_d']
-if 'int_rate' not in dv:
-    extra_cols.append('int_rate')
-if 'term' not in dv:
-    extra_cols.append('term')
+extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate']
+                if tmp not in dv]
+
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
-
 
 cv_begin = oos_cutoff
 cv_end = dt(2015,3,1)
@@ -169,42 +166,63 @@ x_test = fit_data.loc[oos,:][dv].values
 test_int_rate = fit_data.loc[oos]['int_rate'].values
 test_term = fit_data.loc[oos]['term'].values
 
-for num_trees in [200]:
-    print 'Num Trees = {}'.format(num_trees)
-    forest = RandomForestRegressor(n_estimators=num_trees, max_depth=None, 
-                                    min_samples_leaf=400, 
-                                    verbose=2, n_jobs=8)
-    forest = forest.fit(x_train, y_train) 
-    forest.verbose=0
-    pf = forest.predict(x_test)
-    mult = 1.14 * (test_term==36) + 1.72 * (test_term==60)
-    exp_loss = pf * mult
-    alpha = test_int_rate - 100*exp_loss
-    roe = test_int_rate - 100*y_test*mult
+#forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
+#forest = forest.fit(x_train, y_train) 
+forest.verbose=0
+pf = forest.predict(x_test)
+mult = 1.14 * (test_term==36) + 1.72 * (test_term==60)
+exp_loss = pf * mult
+alpha = test_int_rate - 100*exp_loss
 
-    titlestr = '{:>8s}'*7 + '\n'
-    printstr = '{:>8.2f}'*6 + '{:>8.0f}\n'
-    data_str = 'OOS Cutoff = {}'.format(str(oos_cutoff))
-    int_ranges = [[0,7],[7,10],[10,12],[12,13.5],[13.5,15],[15,17],[17,20],[20,30]]
-    for int_range in int_ranges:
-        data_str += '\nInt Range: [{},{}]\n'.format(*int_range)
-        data_str += titlestr.format('LAlpha','UAlpha','ROE','DExp','DAct','Rate','Num')
-        cdx = np.all(zip(test_int_rate>=int_range[0], test_int_rate<=int_range[1]), 1)
-        range_alphas = alpha[cdx] 
-        pctls = np.arange(0,101,10)
-        cutoffs = np.percentile(range_alphas, pctls)
-        for lower, upper in zip(cutoffs[:-1], cutoffs[1:]):
-            idx = np.all(zip(range_alphas>=lower, range_alphas<upper), axis=1)
-            empirical_default = 100*(y_test*mult)[cdx][idx].mean()
-            model_default =100*(exp_loss[cdx][idx]).mean()
-            int_rate = test_int_rate[cdx][idx].mean()
-            range_roe = int_rate - empirical_default
-            data = (lower,upper, range_roe, model_default,empirical_default, int_rate, sum(idx))
-            data_str += printstr.format(*data)
-    data_str += '\n\n{}\t{}\t{}'.format('MinAlpha', 'ROE', 'Count')
-    for min_alpha in range(-5, 16):
-        portfolio = alpha > min_alpha 
-        data_str+= '\n{}\t{:1.2f}\t{}'.format(min_alpha, roe[portfolio].mean(), sum(portfolio))
+test_data = fit_data.loc[oos] 
+irr = np.zeros(len(y_test))
+for row_num, row_pair in enumerate(test_data.iterrows()):
+    row = row_pair[1]
+    grade = 'ABCDE'[min(4, row.grade)]
+    loan =  construct_loan_dict(grade, row.term, row.int_rate, row.loan_amnt)
+    loan['default_risk'] = 100*pf[row_num]
+    calc_npv(loan)
+    irr[row_num] = loan['irr']
+
+roe = test_int_rate - 100*y_test*mult
+
+titlestr = '{:>8s}'*7 + '\n'
+printstr = '{:>8.2f}'*6 + '{:>8.0f}\n'
+data_str = 'OOS Cutoff = {}'.format(str(oos_cutoff))
+int_ranges = [[0,7],[7,10],[10,12],[12,13.5],[13.5,15],[15,17],[17,20],[20,30]]
+for int_range in int_ranges:
+    data_str += '\nInt Range: [{},{}]\n'.format(*int_range)
+    data_str += titlestr.format('LAlpha','UAlpha','ROE','DExp','DAct','Rate','Num')
+    cdx = np.all(zip(test_int_rate>=int_range[0], test_int_rate<=int_range[1]), 1)
+    range_alphas = alpha[cdx] 
+    pctls = np.arange(0,101,10)
+    cutoffs = np.percentile(range_alphas, pctls)
+    for lower, upper in zip(cutoffs[:-1], cutoffs[1:]):
+        idx = np.all(zip(range_alphas>=lower, range_alphas<upper), axis=1)
+        empirical_default = 100*(y_test*mult)[cdx][idx].mean()
+        model_default =100*(exp_loss[cdx][idx]).mean()
+        int_rate = test_int_rate[cdx][idx].mean()
+        range_roe = int_rate - empirical_default
+        data = (lower,upper, range_roe, model_default,empirical_default, int_rate, sum(idx))
+        data_str += printstr.format(*data)
+
+    data_str += titlestr.format('LIRR','UIRR','ROE','DExp','DAct','Rate','Num')
+    cdx = np.all(zip(test_int_rate>=int_range[0], test_int_rate<=int_range[1]), 1)
+    range_irrs = irr[cdx]
+    cutoffs = np.percentile(range_irrs, pctls)
+    for lower, upper in zip(cutoffs[:-1], cutoffs[1:]):
+        idx = np.all(zip(range_irrs>=lower, range_irrs<upper), axis=1)
+        empirical_default = 100*(y_test*mult)[cdx][idx].mean()
+        model_default =100*(exp_loss[cdx][idx]).mean()
+        int_rate = test_int_rate[cdx][idx].mean()
+        range_roe = int_rate - empirical_default
+        data = (lower,upper, range_roe, model_default,empirical_default, int_rate, sum(idx))
+        data_str += printstr.format(*data)
+
+data_str += '\n\n{}\t{}\t{}'.format('MinAlpha', 'ROE', 'Count')
+for min_alpha in range(-5, 16):
+    portfolio = alpha > min_alpha 
+    data_str+= '\n{}\t{:1.2f}\t{}'.format(min_alpha, roe[portfolio].mean(), sum(portfolio))
 
 forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
 data_str += '\n\nForest Importance\n'

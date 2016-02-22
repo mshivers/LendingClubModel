@@ -415,13 +415,13 @@ def prestage(loan, min_rate, min_income):
     return (loanRate>=min_rate) and (income>min_income) and (loan['inquiriesLast6Months']==0)
 
 
-def invest_amount(alpha, min_alpha, max_invest=None):
+def invest_amount(irr, min_irr, max_invest=None):
     if max_invest==None:
         max_invest = 500
-    if alpha < min_alpha:
+    if irr < min_irr:
         return 0
     else:
-        return min(max_invest, 100 * np.ceil(1*(alpha - min_alpha)))
+        return min(max_invest, 100 * np.ceil(1*(irr - min_irr)))
 
 def sleep_seconds(win_len=30):
      # win_len is the number of seconds to continuously check for new loans.
@@ -438,15 +438,15 @@ def sleep_seconds(win_len=30):
 def detail_str(loan):
     l = loan 
 
-    pstr = 'Alpha: {:1.2f}%'.format(l['alpha'])
+    pstr = 'IRR: {:1.2f}%'.format(100*l['irr'])
+    pstr += ' | Alpha: {:1.2f}%'.format(l['alpha'])
     pstr += ' | IntRate: {}%'.format(l['int_rate'])
-    if 'default_risk' in l.keys():
-        pstr += ' | DefaultRisk: {:1.2f}%'.format(l['default_risk'])
-    if 'prevRisk1' in l.keys():
-        pstr += ' | prevRisk1: {:1.2f}%'.format(l['prevRisk1'])
-    if 'prevRisk2' in l.keys():
-        pstr += ' | prevRisk2: {:1.2f}%'.format(l['prevRisk2'])
     pstr += ' | Staged: ${}'.format(l['staged_amount'])
+
+    pstr += '\nDefaultRisk: {:1.2f}%'.format(l['default_risk'])
+    pstr += ' | DefaultMax: {:1.2f}%'.format(l['default_max'])
+    pstr += ' | DefaultStd: {:1.2f}%'.format(l['default_std'])
+    pstr += ' | RiskFactor: {:1.2f}'.format(l['risk_factor'])
 
     pstr += '\nLoanAmnt: ${:1,.0f}'.format(l['loanAmount'])
     pstr += ' | Term: {}'.format(l['term'])
@@ -523,7 +523,29 @@ def send_email(msg):
 def email_details(acct, loans, info):
     msg_list = list()
     msg_list.append('{} orders have been staged to {}'.format(len(loans), acct))
-    msg_list.append('{} total loans found, valued at ${:1,.0f}.'.format(info['num_new_loans'], info['value_new_loans']))
+    msg_list.append('{} total loans found, valued at ${:1,.0f}'.format(info['num_new_loans'], info['value_new_loans']))
+
+    count_by_grade = dict(zip('ABCDEFG', np.zeros(7)))
+    for loan in loans:
+        if loan['email_details'] == True:
+            count_by_grade[loan['grade']] += 1
+    g = info['irr_df'].groupby(['grade', 'initialListStatus'])
+    def compute_metrics(x):
+        result = {'irr_count': x['irr'].count(), 'irr_mean': x['irr'].mean()}
+        return pd.Series(result, name='metrics')
+
+    msg_list.append(g.apply(compute_metrics).to_string())
+    msg_list.append(g.count().to_string())
+    msg_list.append(g.mean().to_string())
+    irr_msgs = list()
+    irr_msgs.append('Average IRR is {:1.2f}%.'.format(100*info['average_irr']))
+    for grade in sorted(info['irr_by_grade'].keys()):
+        avg = 100*np.mean(info['irr_by_grade'][grade])
+        num = len(info['irr_by_grade'][grade])
+        bought = int(count_by_grade[grade])
+        irr_msgs.append('Average of {} grade {} IRRs is {:1.2f}%; {} staged.'.format(num, grade, avg, bought))
+    msg_list.append('\r\n'.join(irr_msgs))
+
     for loan in loans:
         if loan['email_details'] == True:
             msg_list.append(detail_str(loan))
@@ -596,48 +618,60 @@ def load_metro_housing():
 def load_bls():
 
     z2f = load_z2f()
-    try:
-        link = 'http://www.bls.gov/lau/laucntycur14.txt'
-        cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
-            'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
-        file = requests.get(link)
-        rows = [l.split('|') for l in file.text.split('\r\n') if l.startswith(' CN')]
-        data =pd.DataFrame(rows, columns=cols)
-        data['Period'] = data['Period'].apply(lambda x:dt.strptime(x.strip()[:6],'%b-%y'))
-        data.to_csv(os.path.join(data_dir, 'laucntycur14.csv'))
-    except:
-        print '{}: Failed to load BLS laucntycur14 data; using cache\n'.format(dt.now())
-        data = pd.read_csv(os.path.join(data_dir, 'laucntycur14.csv'))
-    # keep only most recent 12 months; note np.unique also sorts
-    min_date = np.unique(data['Period'])[1]
-    data = data[data['Period']>=min_date]
 
-    # reduce Code to just state/county fips number
-    to_float = lambda x: float(str(x).replace(',',''))
-    data['FIPS'] = data['Code'].apply(lambda x: int(x.strip()[2:7]))
+    bls_fname = os.path.join(data_dir, 'bls_summary.csv')
+    if os.path.exists(bls_fname):
+        update_dt = dt.fromtimestamp(os.path.getmtime(bls_fname))
+        days_old = (dt.now() - update_dt).days 
+        summary = pd.read_csv(bls_fname)
+    else:
+        days_old = 999
 
-    # convert numerical data to floats
-    for col in ['CLF', 'Unemployed']:
-        data[col] = data[col].apply(to_float)
-    data = data.ix[:,['Period','FIPS','CLF','Unemployed']]
-    lf = data.pivot('Period', 'FIPS','CLF')
-    ue = data.pivot('Period', 'FIPS', 'Unemployed')
+    if days_old > 14:
+        try:
+            link = 'http://www.bls.gov/lau/laucntycur14.txt'
+            cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
+                'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
+            file = requests.get(link)
+            rows = [l.split('|') for l in file.text.split('\r\n') if l.startswith(' CN')]
+            data =pd.DataFrame(rows, columns=cols)
+            data['Period'] = data['Period'].apply(lambda x:dt.strptime(x.strip()[:6],'%b-%y'))
+
+            # keep only most recent 12 months; note np.unique also sorts
+            min_date = np.unique(data['Period'])[1]
+            data = data[data['Period']>=min_date]
+
+            # reduce Code to just state/county fips number
+            to_float = lambda x: float(str(x).replace(',',''))
+            data['FIPS'] = data['Code'].apply(lambda x: int(x.strip()[2:7]))
+
+            # convert numerical data to floats
+            for col in ['CLF', 'Unemployed']:
+                data[col] = data[col].apply(to_float)
+            data = data.ix[:,['Period','FIPS','CLF','Unemployed']]
+            lf = data.pivot('Period', 'FIPS','CLF')
+            ue = data.pivot('Period', 'FIPS', 'Unemployed')
+            
+            avg_ur = dict()
+            ur = dict()
+            ur_chg = dict()
+            ur_range = dict()
+            for z, fips in z2f.items():
+                avg_ur[z] =  ue.ix[1:,fips].sum(1).sum(0) / lf.ix[1:,fips].sum(1).sum(0)
+                ur[z] =  ue.ix[-1,fips].sum(0) / lf.ix[-1,fips].sum(0)
+                last_year_ur =  ue.ix[1,fips].sum(0) / lf.ix[1,fips].sum(0)
+                ur_chg[z] = ur[z] - last_year_ur
+                monthly_ue = ue.ix[:, fips].sum(1)
+                ur_range[z] = (monthly_ue.max() - monthly_ue.min()) / lf.ix[-1,fips].sum(0) 
+
+            summary = pd.DataFrame({'avg':pd.Series(avg_ur),'current':pd.Series(ur),
+                'chg12m':pd.Series(ur_chg), 'ur_range':pd.Series(ur_range)})
+            
+            summary.to_csv(bls_fname)
+
+        except:
+            print '{}: Failed to load BLS laucntycur14 data; using summary cache\n'.format(dt.now())
     
-    avg_ur = dict()
-    ur = dict()
-    ur_chg = dict()
-    ur_range = dict()
-    for z, fips in z2f.items():
-        avg_ur[z] =  ue.ix[1:,fips].sum(1).sum(0) / lf.ix[1:,fips].sum(1).sum(0)
-        ur[z] =  ue.ix[-1,fips].sum(0) / lf.ix[-1,fips].sum(0)
-        last_year_ur =  ue.ix[1,fips].sum(0) / lf.ix[1,fips].sum(0)
-        ur_chg[z] = ur[z] - last_year_ur
-        monthly_ue = ue.ix[:, fips].sum(1)
-        ur_range[z] = (monthly_ue.max() - monthly_ue.min()) / lf.ix[-1,fips].sum(0) 
-
-    summary = pd.DataFrame({'avg':pd.Series(avg_ur),'current':pd.Series(ur),
-        'chg12m':pd.Series(ur_chg), 'ur_range':pd.Series(ur_range)})
-
     return summary 
     
 
@@ -711,7 +745,8 @@ def construct_z2c(z2f, f2c):
 
 def get_loan_details(lc, loan_id):
     '''
-    Returns the loan details, including location, current job title, employer, relisted status, and number of inquiries.
+    Returns the loan details, including location, current job title, 
+    employer, relisted status, and number of inquiries.
     '''
     payload = {
         'loan_id': loan_id
@@ -784,7 +819,89 @@ def add_external_features(l):
         l['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
 
 
+default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
+prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
 
+
+def construct_loan_dict(grade, term, rate, amount):
+    pmt = np.pmt(rate/1200., term, amount)
+    return dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
+        ('loan_amount', amount), ('int_rate', rate)])
+
+
+
+
+def calc_npv(l, discount_rate=0.10):
+    ''' All calculations assume a loan amount of $1.
+    Note the default curves are the cumulative percent of loans that have defaulted prior 
+    to month m; the prepayment curves are the average percentage of outstanding balance that is prepaid 
+    each month (not cumulative) where the average is over all loans that have not yet matured (regardless 
+    of prepayment or default).  We'll assume that the prepayments are in full'''
+
+    net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
+
+    key = '{}{}'.format(min('G', l['grade']), l['term']) 
+    prepay_rate = np.array(prepay_curves[key])
+    base_defaults = np.array(default_curves[key])
+
+    #adjusted_default_risk = (l['default_risk'] + l['default_std'])/100
+    adjusted_default_risk = l['default_max']/100 
+    risk_factor = adjusted_default_risk / base_defaults[11]
+    l['risk_factor'] = risk_factor
+
+    # adjust only the first 15 months of default rates downward to match the model's 12-month default estimate.
+    # this is a hack; adjusting the entire curve seems obviously wrong.  E.g if we had a C default curve
+    # that was graded D, adjusting the entire D curve down based on the 12-mth ratio would underestimate defaults
+    cdefaults = np.r_[base_defaults[:1],np.diff(base_defaults)]
+    if risk_factor < 1:
+        cdefaults[:15] *= risk_factor
+    else:
+        cdefaults *= risk_factor
+
+    cdefaults = cdefaults.cumsum()
+    
+    monthly_int_rate = l['int_rate']/1200.
+    monthly_discount_rate = (1 + discount_rate) ** (1/12.) - 1
+    monthly_payment = l['monthly_payment'] / l['loan_amount']
+
+    # start with placeholder for time=0 investment for irr calc later
+    payments = np.zeros(l['term']+1)
+    
+    principal_balance = 1
+    # add monthly payments
+    for m in range(1, l['term']+1):
+
+        interest_due = principal_balance * monthly_int_rate
+        principal_due = monthly_payment - interest_due
+
+        # prepayment rate is a pct of ending balance
+        principal_balance -= principal_due
+        prepayment_amt = principal_balance * prepay_rate[m-1]
+        
+        scheduled_amt = monthly_payment * (1 - cdefaults[m-1])
+        payments[m] = prepayment_amt + scheduled_amt
+        
+        # reduce monthly payment to reflect this month's prepayment
+        principal_balance -= prepayment_amt
+        monthly_payment *= (1 - prepay_rate[m-1])
+
+
+    # reduce payments by lending club service charge
+    payments *= net_payment_pct
+    npv = np.npv(monthly_discount_rate, payments) 
+
+    # Add initial investment outflow at time=0 to calculate irr: 
+    payments[0] += -1
+    irr = np.irr(payments)
+    
+    l['irr'] = -1 + (1 + irr) ** 12
+    l['npv'] = 100 * npv    
+
+    return 
+    
+
+
+    
 
 class LC():
     def __init__(self):
