@@ -16,7 +16,7 @@ NEGATIVE_ONE = -1
 #parent_dir = '/home/apprun/LCModel/LCModel'
 parent_dir = '/Users/marcshivers/LCModel'
 data_dir = os.path.join(parent_dir, 'data')
-
+cached_training_data_fname = 'cached_training_data.csv'
 update_hrs = [1,5,9,13,17,21]
 oos_cutoff = np.datetime64('2015-01-01')
 
@@ -84,20 +84,42 @@ def clean_title(x):
         x = x.replace(tok,'')
     return x
 
-def load_training_data(full_dataset=False):
+def load_training_data():
+
+    fname = os.path.join(data_dir, cached_training_data_fname)
+    if os.path.exists(fname):
+        update_dt = dt.fromtimestamp(os.path.getmtime(fname))
+        days_old = (dt.now() - update_dt).days 
+        print 'Cached LC data created on {}, and is {} days old'.format(update_dt, days_old)
+        df = pd.read_csv(fname)
+    else:
+        print 'Cache not found. Generating cache from source data'
+        cache_training_data()
+        df = load_training_data()
+
+    return df
+
+def cache_training_data():
+
     fname = os.path.join(data_dir, 'LoanStats3{}_securev1.csv')
     da = pd.read_csv(fname.format('a'), header=1, nrows=39786)
     db = pd.read_csv(fname.format('b'), header=1)
     dc = pd.read_csv(fname.format('c'), header=1)
     dd = pd.read_csv(fname.format('d'), header=1)
     df = pd.concat((da,db,dc,dd), ignore_index=True)
-    idx = (df[['last_pymnt_d', 'issue_d']].isnull()).any(1)
-    df = df.ix[~idx]
+
+    # take subset of good data
+    idx1 = ~(df[['last_pymnt_d', 'issue_d', 'annual_inc']].isnull()).any(1)
 
     # only keep titles in ascii
-    idx = df['emp_title'].apply(lambda x:max(ord(c) for c in str(x))<128)
-    df = df.ix[idx]
+    idx2 = df['emp_title'].apply(lambda x:max(ord(c) for c in str(x))<128)
+    df = df.ix[idx1&idx2]
     
+    # use only data after emp_title switched from company name
+    df['issue_d'] = df['issue_d'].apply(lambda x: dt.strptime(x, '%b-%Y'))
+    idx3 = df['issue_d']>=np.datetime64('2013-10-01')
+    df = df.ix[idx3].copy()
+
     df['id'] = df['id'].astype(int)
 
     # clean dataframe
@@ -109,7 +131,6 @@ def load_training_data(full_dataset=False):
     cvt['revol_bal'] = lambda x: round(x,-2)
     cvt['dti'] = lambda x: round(x,0)
     cvt['grade'] = lambda x: 'ABCDEFG'.index(str(x))
-    cvt['issue_d'] = lambda x: dt.strptime(x, '%b-%Y')
     cvt['last_pymnt_d'] = lambda x: dt.strptime(x, '%b-%Y')
     cvt['earliest_cr_line'] = lambda x: dt.strptime(x, '%b-%Y')
     cvt['home_ownership'] = lambda x: home_map[x]
@@ -127,17 +148,35 @@ def load_training_data(full_dataset=False):
     df['mths_since_last_delinq'] = df['mths_since_last_delinq'].fillna(LARGE_INT)
     df['mths_since_last_major_derog'] = df['mths_since_last_major_derog'].fillna(LARGE_INT)
 
+    # add default info
     df['wgt_default'] = 0.0 
     df.ix[df['loan_status']=='In Grace Period', 'wgt_default'] = 0.28
     df.ix[df['loan_status']=='Late (16-30 days)', 'wgt_default'] = 0.58
     df.ix[df['loan_status']=='Late (31-120 days)', 'wgt_default'] = 0.74
     df.ix[df['loan_status']=='Default', 'wgt_default'] = 0.89
     df.ix[df['loan_status']=='Charged Off', 'wgt_default'] = 1.0
-
-    one_year = 360*24*60*60*1e9  # we want to find payments strictly less than 1 year, so we use 360 days here.
-    df['12m_late'] = (df['wgt_default']>0) & (df['last_pymnt_d']-df['issue_d']<one_year)
+    # we want to find payments strictly less than 1 year, so we use 360 days here.
+    just_under_one_year = 360*24*60*60*1e9  
+    time_to_last_pymnt = df['last_pymnt_d']-df['issue_d']
+    df['12m_late'] = (df['wgt_default']>0) & (time_to_last_pymnt<just_under_one_year)
     df['12m_wgt_default'] = df['12m_late'] * df['wgt_default']
 
+
+    # add prepayment info
+    df['12m_prepay'] = 0.0
+    # for Fully Paid, assume all prepayment happened in last month
+    just_over_12months = 12.5*30*24*60*60*1e9  
+    prepay_12m_idx = ((df['loan_status']=='Fully Paid') & (time_to_last_pymnt<=just_over_12months))
+    df.ix[prepay_12m_idx, '12m_prepay'] = 1.0
+
+    # partial prepays
+    df['mob'] = np.ceil(time_to_last_pymnt.astype(int) / (just_over_12months / 12.0))
+    prepayments = np.maximum(0, df.total_pymnt - df.mob * df.installment)
+    partial_12m_prepay_idx = (df['loan_status']=='Current') & (prepayments > 0)
+    prepay_12m_pct = prepayments / df.loan_amnt * (12. / np.maximum(12., df.mob))
+    df.ix[partial_12m_prepay_idx, '12m_prepay'] = prepay_12m_pct[partial_12m_prepay_idx]
+
+   
     df['emp_title'] = df['emp_title'].fillna('Blank').apply(lambda x:str(x).strip())
     df['clean_title'] = df['emp_title'].apply(lambda x:clean_title(x))
 
@@ -145,12 +184,98 @@ def load_training_data(full_dataset=False):
     df['mths_since_last_major_derog'].fillna(LARGE_INT)
     df['mths_since_last_record'].fillna(LARGE_INT)
 
-    # use only data after emp_title switched from company name
-    if not full_dataset:
-        endx = df['issue_d']>=np.datetime64('2013-10-01')
-        df = df.ix[endx].copy()
 
-    return df
+    ### Add non-LC features
+    urate = pd.read_csv(os.path.join(parent_dir, 'urate_by_3zip.csv'), index_col=0)
+    ur = pd.DataFrame(np.zeros((len(urate),999))*np.nan,index=urate.index, columns=[str(i) for i in range(1,1000)])
+    ur.ix[:,:] = urate.median(1).values[:,None]
+    ur.ix[:,urate.columns] = urate
+    avg_ur = pd.rolling_mean(ur, 12)
+    ur_chg = ur - ur.shift(12)
+    
+    hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
+    mean_hpa4 = hpa4.mean(1)
+    missing_cols = [str(col) for col in range(0,1000) if str(col) not in hpa4.columns]
+    for c in missing_cols:
+        hpa4[c] = mean_hpa4
+
+    z2mi = json.load(open(os.path.join(parent_dir, 'zip2median_inc.json'),'r'))
+    z2mi = dict([(int(z), float(v)) for z,v in zip(z2mi.keys(), z2mi.values())])
+    z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
+
+    # separate out employer name (before 9/23/2013) from employment title (after that)
+    def return_word(x, position=0):
+        if len(x)==0:
+            return ''
+        else:
+            return x.split()[position]
+    df['title_capitalization'] = df['emp_title'].apply(tokenize_capitalization)
+
+    clean_title_count = Counter(df['clean_title'].values)
+    clean_titles_sorted = [ttl[0] for ttl in sorted(clean_title_count.items(), key=lambda x:-x[1])]
+    clean_title_map = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
+
+    # process job title features
+    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_map[x])
+  
+    one_year = 365*24*60*60*1e9
+    df['credit_length'] = ((df['issue_d'] - df['earliest_cr_line']).astype(int)/one_year)
+    df['credit_length'] = df['credit_length'].apply(lambda x: max(-1,round(x,0)))
+    df['even_loan_amnt'] = df['loan_amnt'].apply(lambda x: float(x==round(x,-3)))
+    df['int_pymt'] = df['loan_amnt'] * df['int_rate'] / 1200.0
+    df['loan_amnt'] = df['loan_amnt'].apply(lambda x: round(x,-3))
+    df['revol_bal-loan'] = df['revol_bal'] - df['loan_amnt']
+
+    df['urate_d'] = df['issue_d'].apply(lambda x: int(str((x-td(days=60)))[:7].replace('-','')))
+    df['urate'] = [ur[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['avg_urate'] = [avg_ur[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['urate_chg'] = [ur_chg[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['max_urate'] = [ur[a][:b].max() for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['min_urate'] = [ur[a][:b].min() for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['urate_range'] = df['max_urate'] - df['min_urate'] 
+
+    df['issue_mth'] = df['issue_d'].apply(lambda x:int(str(x)[5:7]))
+    df['med_inc'] = df['zip_code'].apply(lambda x:z2mi[x])
+    df['pct_med_inc'] = df['annual_inc'] / df['med_inc']
+
+
+    df['hpa_date'] = df['issue_d'].apply(lambda x:x-td(days=120))
+    df['hpa_qtr'] = df['hpa_date'].apply(lambda x: 100*x.year + x.month/4 + 1)
+    hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
+    missing_cols = [str(col) for col in range(0,1000) if str(col) not in hpa4.columns]
+    mean_hpa4 = hpa4.mean(1)
+    for c in missing_cols:
+        hpa4[c] = mean_hpa4
+    df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['zip_code'].apply(lambda x: str(int(x))))]
+
+    df['pymt_pct_inc'] = df['installment'] / df['annual_inc'] 
+    df['revol_bal_pct_inc'] = df['revol_bal'] / df['annual_inc']
+    df['int_pct_inc'] = df['int_pymt'] / df['annual_inc'] 
+
+    # This is estimated using only loans of grede C or lower
+    df['title_capitalization'] = df['emp_title'].apply(tokenize_capitalization)
+    ctloC_dict = json.load(open(os.path.join(parent_dir, 'ctloC.json'),'r'))
+    ctloC = defaultdict(lambda :0, ctloC_dict)
+    odds_map = lambda x: calc_log_odds('^{}$'.format(x), ctloC, 4)
+    df['ctloC'] = df['clean_title'].apply(odds_map)
+
+    caploC = json.load(open(os.path.join(parent_dir, 'caploC.json'),'r'))
+    caploC = defaultdict(lambda :0, caploC)
+    odds_map = lambda x: calc_log_odds(x, caploC, 4) #Note title_capitalization already is in '^{}$' format
+    df['caploC'] = df['title_capitalization'].apply(odds_map)
+
+    pctlo_dict = json.load(open(os.path.join(parent_dir, 'pctlo.json'),'r'))
+    pctlo = defaultdict(lambda :0, pctlo_dict)
+    odds_map = lambda x: calc_log_odds('^{}$'.format(x), pctlo, 4)
+    df['pctlo'] = df['clean_title'].apply(odds_map)
+
+    df['cur_bal-loan_amnt'] = df['tot_cur_bal'] - df['loan_amnt'] 
+    df['cur_bal_pct_loan_amnt'] = df['tot_cur_bal'] / df['loan_amnt'] 
+    df['loan_pct_income'] = df['loan_amnt'] / df['annual_inc']
+
+    save_to = os.path.join(data_dir, cached_training_data_fname)
+    df.to_csv(save_to)
+
 
 def only_ascii(s):
     return ''.join([c for c in s if ord(c)<128])
@@ -238,7 +363,8 @@ def load_tok4_capitalization_log_odds_func():
     return log_odds_func
 
 
-def create_clean_title_log_odds_json(df, fname='ctlo.json', tok_len=4, fld_name='clean_title'):
+def create_clean_title_log_odds_json(df, fname='ctlo.json', tok_len=4, fld_name='clean_title',
+        target_name='12m_wgt_default'):
     #employer name was in the emp_title field before 9/24/13
     
     idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff)
@@ -254,7 +380,7 @@ def create_clean_title_log_odds_json(df, fname='ctlo.json', tok_len=4, fld_name=
     tok_df = tok_df.sort('freq',ascending=False)
     
     odds_map = dict()
-    mean_default = training['12m_wgt_default'].mean() 
+    mean_default = training[target_name].mean() 
     C = 2000 #regularized number of mean defaults
     for _, row in tok_df.iterrows():
         tok, freq = row
@@ -262,8 +388,8 @@ def create_clean_title_log_odds_json(df, fname='ctlo.json', tok_len=4, fld_name=
             continue 
         training['has_tok'] = titles.apply(lambda x: tok in x)
         grp = training.groupby('has_tok')
-        default_sum = grp.sum()['12m_wgt_default'] + C * mean_default
-        default_count = grp.count()['12m_wgt_default'] + C
+        default_sum = grp.sum()[target_name] + C * mean_default
+        default_count = grp.count()[target_name] + C
         regularized_default = default_sum  / default_count 
         log_odds = np.log(regularized_default[True]) - np.log(regularized_default[False])
         print default_count[True], '"{}"'.format(tok), '{:1.2f}'.format(log_odds)
@@ -421,7 +547,7 @@ def invest_amount(irr, min_irr, max_invest=None):
     if irr < min_irr:
         return 0
     else:
-        return min(max_invest, 100 * np.ceil(1*(irr - min_irr)))
+        return min(max_invest, 25 * np.ceil(1*(irr - min_irr)))
 
 def sleep_seconds(win_len=30):
      # win_len is the number of seconds to continuously check for new loans.
@@ -438,15 +564,21 @@ def sleep_seconds(win_len=30):
 def detail_str(loan):
     l = loan 
 
-    pstr = 'IRR: {:1.2f}%'.format(100*l['irr'])
-    pstr += ' | Alpha: {:1.2f}%'.format(l['alpha'])
+    pstr = 'BaseIRR: {:1.2f}%'.format(100*l['base_irr'])
+    pstr += ' | StressIRR: {:1.2f}%'.format(100*l['stress_irr'])
     pstr += ' | IntRate: {}%'.format(l['int_rate'])
-    pstr += ' | Staged: ${}'.format(l['staged_amount'])
+    pstr += ' | BaseNPV: {:1.2f}'.format(100*l['base_npv'])
+    pstr += ' | StressNPV: {:1.2f}'.format(100*l['stress_npv'])
 
-    pstr += '\nDefaultRisk: {:1.2f}%'.format(l['default_risk'])
-    pstr += ' | DefaultMax: {:1.2f}%'.format(l['default_max'])
-    pstr += ' | DefaultStd: {:1.2f}%'.format(l['default_std'])
+    pstr += '\nDefaultRisk: {:1.2f}%'.format(100*l['default_risk'])
+    pstr += ' | DefaultMax: {:1.2f}%'.format(100*l['default_max'])
     pstr += ' | RiskFactor: {:1.2f}'.format(l['risk_factor'])
+    pstr += ' | PrepayRisk: {:1.2f}%'.format(100*l['prepay_risk'])
+    pstr += ' | PrepayMax: {:1.2f}%'.format(100*l['prepay_max'])
+
+    pstr += '\nAlpha: {:1.2f}%'.format(l['alpha'])
+    pstr += ' | InitStatus: {}'.format(l['initialListStatus'])
+    pstr += ' | Staged: ${}'.format(l['staged_amount'])
 
     pstr += '\nLoanAmnt: ${:1,.0f}'.format(l['loanAmount'])
     pstr += ' | Term: {}'.format(l['term'])
@@ -529,14 +661,13 @@ def email_details(acct, loans, info):
     for loan in loans:
         if loan['email_details'] == True:
             count_by_grade[loan['grade']] += 1
+
     g = info['irr_df'].groupby(['grade', 'initialListStatus'])
     def compute_metrics(x):
-        result = {'irr_count': x['irr'].count(), 'irr_mean': x['irr'].mean()}
+        result = {'irr_count': x['base_irr'].count(), 'irr_mean': x['base_irr'].mean()}
         return pd.Series(result, name='metrics')
-
     msg_list.append(g.apply(compute_metrics).to_string())
-    msg_list.append(g.count().to_string())
-    msg_list.append(g.mean().to_string())
+
     irr_msgs = list()
     irr_msgs.append('Average IRR is {:1.2f}%.'.format(100*info['average_irr']))
     for grade in sorted(info['irr_by_grade'].keys()):
@@ -831,73 +962,100 @@ def construct_loan_dict(grade, term, rate, amount):
 
 
 
-def calc_npv(l, discount_rate=0.10):
+def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
     ''' All calculations assume a loan amount of $1.
     Note the default curves are the cumulative percent of loans that have defaulted prior 
-    to month m; the prepayment curves are the average percentage of outstanding balance that is prepaid 
-    each month (not cumulative) where the average is over all loans that have not yet matured (regardless 
-    of prepayment or default).  We'll assume that the prepayments are in full'''
+    to month m; the prepayment rate is the percentage of loans that were prepaid prior to 12m.
+    We'll assume that the prepayments are in full.  In the code below, think of the calculations
+    as applying to a pool of 100 loans, with a percentage fully prepaying each month and
+    a percentage defaulting each month.'''
 
     net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
 
     key = '{}{}'.format(min('G', l['grade']), l['term']) 
-    prepay_rate = np.array(prepay_curves[key])
-    base_defaults = np.array(default_curves[key])
-
-    #adjusted_default_risk = (l['default_risk'] + l['default_std'])/100
-    adjusted_default_risk = l['default_max']/100 
-    risk_factor = adjusted_default_risk / base_defaults[11]
+    base_cdefaults = np.array(default_curves[key])
+    risk_factor = default_rate_12m / base_cdefaults[11]
     l['risk_factor'] = risk_factor
 
     # adjust only the first 15 months of default rates downward to match the model's 12-month default estimate.
     # this is a hack; adjusting the entire curve seems obviously wrong.  E.g if we had a C default curve
     # that was graded D, adjusting the entire D curve down based on the 12-mth ratio would underestimate defaults
-    cdefaults = np.r_[base_defaults[:1],np.diff(base_defaults)]
-    if risk_factor < 1:
+    cdefaults = np.r_[base_cdefaults[:1],np.diff(base_cdefaults)]
+    if risk_factor < 0:
         cdefaults[:15] *= risk_factor
     else:
         cdefaults *= risk_factor
 
     cdefaults = cdefaults.cumsum()
-    
+    eventual_default_pct = cdefaults[-1]
+
+    max_prepayment_pct = 1 - eventual_default_pct
+
+    # catch the case where total prepayments + total defaults > 100%  (they're estimated independently)
+    if max_prepayment_pct <= prepayment_rate_12m: 
+        return 0, 0
+
+    # prepayment model give the odds of full prepayment in the first 12 months 
+    # here we calculate the probability of prepayment just for the loans that 
+    # won't default
+    prepayment_pool_decay_12m = (max_prepayment_pct - prepayment_rate_12m) / max_prepayment_pct
+    prepay_rate = 1.0 - prepayment_pool_decay_12m ** (1/12.0)  
+
     monthly_int_rate = l['int_rate']/1200.
     monthly_discount_rate = (1 + discount_rate) ** (1/12.) - 1
-    monthly_payment = l['monthly_payment'] / l['loan_amount']
+    contract_monthly_payment = l['monthly_payment'] / l['loan_amount']
+    current_monthly_payment = contract_monthly_payment
 
     # start with placeholder for time=0 investment for irr calc later
     payments = np.zeros(l['term']+1)
     
-    principal_balance = 1
+    contract_principal_balance = 1.0
+    pct_loans_prepaid = 0.0
+    pct_loans_defaulted = 0.0
     # add monthly payments
     for m in range(1, l['term']+1):
-
-        interest_due = principal_balance * monthly_int_rate
-        principal_due = monthly_payment - interest_due
-
-        # prepayment rate is a pct of ending balance
-        principal_balance -= principal_due
-        prepayment_amt = principal_balance * prepay_rate[m-1]
         
-        scheduled_amt = monthly_payment * (1 - cdefaults[m-1])
-        payments[m] = prepayment_amt + scheduled_amt
-        
-        # reduce monthly payment to reflect this month's prepayment
-        principal_balance -= prepayment_amt
-        monthly_payment *= (1 - prepay_rate[m-1])
+        # calculate contractually-required payments
+        contract_interest_due = contract_principal_balance * monthly_int_rate
+        contract_principal_due = min(contract_principal_balance, 
+                                     contract_monthly_payment - contract_interest_due)
 
+        default_rate_this_month = cdefaults[m-1] - pct_loans_defaulted
+        pct_loans_defaulted = cdefaults[m-1]
+ 
+        # account for defaults and prepayments 
+        performing_pct = (1 - pct_loans_defaulted - pct_loans_prepaid)
+        interest_received = contract_interest_due * performing_pct 
+        scheduled_principal_received = contract_principal_due * performing_pct 
+        scheduled_principal_defaulted = default_rate_this_month * contract_principal_balance
+
+        # update contractual principal remaining (i.e. assuming no prepayments or defaults) 
+        # prior to calculating prepayments
+        contract_principal_balance -= contract_principal_due
+
+        #prepayments are a fixed percentage of the remaining pool of non-defaulting loans
+        prepayment_pct = max(0, (max_prepayment_pct - pct_loans_prepaid)) * prepay_rate
+        prepayment_amount = contract_principal_balance * prepayment_pct 
+
+        # account for prepayments
+        pct_loans_prepaid += prepayment_pct 
+
+        payments[m] = interest_received + scheduled_principal_received + prepayment_amount
+        
+        #print m, contract_principal_balance, payments[m], interest_received, 
+        #print scheduled_principal_received , prepayment_amount, pct_loans_prepaid, pct_loans_defaulted
 
     # reduce payments by lending club service charge
     payments *= net_payment_pct
     npv = np.npv(monthly_discount_rate, payments) 
-
     # Add initial investment outflow at time=0 to calculate irr: 
     payments[0] += -1
     irr = np.irr(payments)
     
-    l['irr'] = -1 + (1 + irr) ** 12
-    l['npv'] = 100 * npv    
+    # use same units for irr as loan interest rate
+    annualized_irr = irr * 12.0
 
-    return 
+    return annualized_irr, npv  
     
 
 

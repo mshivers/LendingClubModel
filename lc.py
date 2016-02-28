@@ -144,7 +144,8 @@ def add_to_known_loans(known_loans, new_loans):
             l['max_stage_amount'] = 0
             l['staged_amount'] = 0
             l['default_risk'] = 100
-            l['irr'] = -100
+            l['base_irr'] = -100
+            l['stress_irr'] = -100
             l['alpha'] = -100
             l['search_time'] = dt.now()
             l['inputs_parsed'] = False 
@@ -182,17 +183,19 @@ def update_recent_loan_info(known_loans, info):
     irr_by_grade = defaultdict(lambda :list())
     irr_data = list()
     for l in known_loans.values():
-        if l['irr'] > -100:
+        if l['base_irr'] > -100:
             elapsed = (dt.now()-l['search_time']).total_seconds()
             if elapsed < 600:
-                irr_list.append(l['irr']) 
-                irr_by_grade[l['grade']].append(l['irr'])
-                irr_data.append((l['grade'], l['initialListStatus'], l['irr']))
+                irr_list.append(l['base_irr']) 
+                irr_by_grade[l['grade']].append(l['base_irr'])
+                irr_data.append((l['grade'], l['initialListStatus'], l['base_irr']))
 
     info['average_irr'] = np.mean(irr_list)
     info['irr_by_grade'] = irr_by_grade
 
-    col_names = ['grade', 'initialListStatus', 'irr']
+    col_names = ['grade', 'initialListStatus', 'base_irr']
+    if len(irr_data)==0:
+        irr_data = [('A', 'F', -100)]
     info['irr_df'] = pd.DataFrame(data=irr_data, columns=col_names)
     return
 
@@ -283,13 +286,21 @@ def main(min_irr=11, max_invest=500):
                 if loan['model_run']==False:
 
                     rfm.calc_default_risk(loan)        
-                    lclib.calc_npv(loan, min_irr/100.)
+                    rfm.calc_prepayment_risk(loan)        
+
+                    # calc standard irr
+                    loan['base_irr'], loan['base_npv'] = lclib.calc_npv(loan, loan['default_risk'], 
+                            loan['prepay_risk'], min_irr/100.)
+
+                    # calc standard irr
+                    loan['stress_irr'], loan['stress_npv'] = lclib.calc_npv(loan, loan['default_max'], 
+                            loan['prepay_max'], min_irr/100.)
 
                     # the mults below are empirical estimates from 2010 loans 
                     # for total loss percentages as a mult of year 1 defaults.
                     mult = 1.14 if loan['loan_term']==36 else 1.72 
-                    loan['alpha'] = loan['int_rate'] - mult * loan['default_risk']
-                    loan['max_stage_amount'] = lclib.invest_amount(100*loan['irr'], 
+                    loan['alpha'] = loan['int_rate'] - mult * 100 * loan['default_risk']
+                    loan['max_stage_amount'] = lclib.invest_amount(100*loan['base_irr'], 
                                                                    min_irr=min_irr, 
                                                                    max_invest=max_invest) 
                     # Don't invest in loans that were already passed over as whole loans
@@ -302,7 +313,7 @@ def main(min_irr=11, max_invest=500):
                 #Stage loan
                 amount_to_invest = loan['max_stage_amount'] - loan['staged_amount']
                 if amount_to_invest>0:
-                    if loan['default_risk'] < 1.00:
+                    if loan['default_risk'] < 0.01:
                         amount_staged = stage_order_fast(lc_tax, loan['id'], amount_to_invest)
                     else:
                         amount_staged = stage_order_fast(lc_ira, loan['id'], amount_to_invest)

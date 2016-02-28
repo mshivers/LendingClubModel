@@ -9,13 +9,16 @@ from collections import defaultdict
 from sklearn.externals import joblib
 import lclib
 
-#model_hash = 'ZAWNHJ'
 model_hash = 'YMHVDZ'
 model_path = os.path.join(lclib.parent_dir, model_hash)
-model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')
 
-prod_forest = joblib.load(model_file) 
-prod_forest.verbose=0
+default_model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')
+default_model = joblib.load(default_model_file) 
+default_model.verbose=0
+
+prepayment_model_file = os.path.join(lclib.parent_dir, 'prepayment_risk_model.pkl')
+prepayment_model = joblib.load(prepayment_model_file) 
+prepayment_model.verbose=0
 
 
 #updated prod model
@@ -24,12 +27,16 @@ prod_clean_title_map = defaultdict(lambda :1e9, prod_clean_title_map )
 
 tok4_cap_title_dict = json.load(open(os.path.join(model_path, 'prod_tok4_capitalization_log_odds.json'),'r'))
 tok4_cap_title_dict = defaultdict(lambda :0, tok4_cap_title_dict)
+#Note the input x is already in '^{}$' format
+cap_title_odds = lambda x: lclib.calc_log_odds(x, tok4_cap_title_dict, 4)
         
 tok4_clean_title_dict =json.load(open(os.path.join(model_path, 'prod_tok4_clean_title_log_odds.json'),'r'))
 tok4_clean_title_dict = defaultdict(lambda :0, tok4_clean_title_dict)
-
-cap_title_odds = lambda x: lclib.calc_log_odds(x, tok4_cap_title_dict, 4)
 clean_title_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), tok4_clean_title_dict, 4)
+
+pctlo_dict = json.load(open(os.path.join(lclib.parent_dir, 'pctlo.json'),'r'))
+pctlo_dict = defaultdict(lambda :0, pctlo_dict)
+pctlo_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), pctlo_dict, 4)
 
 def parse_REST_loan_details(dtl):
     try:
@@ -50,6 +57,7 @@ def parse_REST_loan_details(dtl):
         dtl['clean_title_rank'] = prod_clean_title_map[dtl['clean_title']]
         dtl['capitalization_log_odds'] = cap_title_odds(dtl['capitalization_title'])
         dtl['clean_title_log_odds'] = clean_title_odds(dtl['clean_title'])
+        dtl['pctlo'] = pctlo_odds(dtl['clean_title'])
 
         dtl['int_rate'] = float(dtl['intRate'])
         dtl['loan_amount'] = float(dtl['loanAmount'])
@@ -88,6 +96,7 @@ def parse_REST_loan_details(dtl):
         dtl['issue_mth'] = dt.now().month
 
         assert dtl['annual_income'] > 0, "Income is not positive"
+        dtl['loan_pct_income'] = dtl['loan_amount'] / dtl['annual_income']
 
         dtl['api_details_parsed'] = True
 
@@ -207,12 +216,12 @@ def calc_default_risk(dtl):
         x[23] = dtl['urate_range'] 
         x[24] = dtl['HPA1Yr'] 
 
-        predictions = [tree.predict(x)[0] for tree in prod_forest.estimators_]
-        dtl['default_risk'] = 100.0 * np.mean(predictions) 
+        predictions = [tree.predict(x)[0] for tree in default_model.estimators_]
+        dtl['default_risk'] = np.mean(predictions) 
         #get bootstrap estimates for default mean estimator 
         bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
-        dtl['default_max'] = 100 * np.max(bootstrap_means)
-        dtl['default_std'] = 100 * np.std(bootstrap_means)
+        dtl['default_max'] = np.max(bootstrap_means)
+        dtl['default_std'] = np.std(bootstrap_means)
     
     except Exception as e:
         msg = 'Error in random_forest_model.py::default_risk()'
@@ -224,94 +233,79 @@ def calc_default_risk(dtl):
         msg += '\n\n'
         print msg
         print zip(range(len(x)), x)
-        dtl['default_risk'] = 100.0
-        dtl['default_max'] = 100 
+        dtl['default_risk'] = 1.0
+        dtl['default_max'] = 1.0
         dtl['default_std'] = 0
    
-    return 
+    return dtl['default_max']
 
 
-def default_risk_old(dtl):
-    #try:
-    x = np.zeros(33) * np.nan
 
-    job_title = dtl['emp_title']
+def calc_prepayment_risk(dtl):
     # decision variables: 
-
-    # decision variables: 
-    dv = ['loan_amnt', 'int_rate', 'installment', 'term', 'sub_grade', 'purpose', 
-          'emp_length', 'home_ownership', 'annual_inc', 'dti',
-          'delinq_2yrs', 
-          #'fico_range_low',
+    dv = [
+          'loan_amnt', 
+          'int_rate', 
+          'installment', 
+          'term',
+          'sub_grade', 
+          'purpose', 
+          'home_ownership', 
+          'dti',
           'inq_last_6mths', 
-          'mths_since_last_delinq', 'mths_since_last_record', 'mths_since_last_major_derog',
-          'open_acc', 
-          'pub_rec', 
-          #'zip_code',
-          'revol_bal', 
-          'revol_util', 'total_acc', 'verification_status',
-          'int_pymt', 
+          'mths_since_last_delinq', 
+          'revol_util', 
+          'total_acc', 
           'credit_length',
           'even_loan_amnt', 
           'revol_bal-loan', 
-          'urate',
-          #'avg_urate',
-          #'urate_chg', #,'urate_range',
-          #'mod_rate',
-          #'med_inc', 
-          'pct_med_inc', 
-          #'emp_title_rank',
-          'clean_title_rank', 
-          #'short_title_rank',
-          'tok4_clean_title_log_odds', 
-          'tok4_capitalization_log_odds', 
+          'pctlo',
           'pymt_pct_inc', 
           'int_pct_inc', 
-          #'hpa4',
           'revol_bal_pct_inc',
-          #'debt-loan_amnt',
-          #'debt_pct_loan_amnt'
+          'urate_chg', 
+          'hpa4',
+          'fico_range_low',
+          'loan_pct_income',
         ]
+    try:
+        x = np.zeros(23) * np.nan
+
+        job_title = dtl['emp_title']
 
 
-    x[0] = dtl['loan_amount']
-    x[1] = dtl['int_rate']
-    x[2] = dtl['monthly_payment'] 
-    x[3] = dtl['loan_term'] 
-    x[4] = dtl['subgrade_number'] 
-    x[5] = dtl['purpose_number'] 
-    x[6] = dtl['emp_length'] 
-    x[7] = dtl['home_status_number']
-    x[8] = dtl['annual_income']
-    x[9] = dtl['dti']
-    x[10] = dtl['delinq_2yrs'] 
-    x[11] = dtl['inq_last_6mths'] 
-    x[12] = dtl['mths_since_last_delinq']
-    x[13] = dtl['mths_since_last_record']
-    x[14] = dtl['mths_since_last_major_derog']
-    x[15] = dtl['open_acc'] 
-    x[16] = dtl['pub_rec']
-    x[17] = dtl['revol_bal'] 
-    x[18] = dtl['revol_util'] 
-    x[19] = dtl['total_acc'] 
-    x[20] = dtl['is_inc_verified'] 
-    x[21] = dtl['monthly_int_payment'] 
-    x[22] = dtl['credit_length'] 
-    x[23] = dtl['even_loan_amount']
-    x[24] = dtl['revol_bal-loan'] 
-    x[25] = dtl['urate'] 
-    x[26] = dtl['annual_income'] / dtl['med_income'] 
-    x[27] = prod_clean_title_map[job_title]
-    x[28] = dtl['clean_title_log_odds'] 
-    x[29] = dtl['capitalization_log_odds']
-    x[30] = dtl['monthly_payment'] / dtl['annual_income'] 
-    x[31] = dtl['monthly_int_payment'] / dtl['annual_income']
-    x[32] = dtl['revol_bal'] / dtl['annual_income'] 
+        x[0] = dtl['loan_amount']
+        x[1] = dtl['int_rate'] 
+        x[2] = dtl['monthly_payment'] 
+        x[3] = dtl['term'] 
+        x[4] = dtl['subgrade_number'] 
+        x[5] = dtl['purpose_number']
+        x[6] = dtl['home_status_number']
+        x[7] = dtl['dti']
+        x[8] = dtl['inq_last_6mths'] 
+        x[9] = dtl['delinq_2yrs'] 
+        x[10] = dtl['revol_util'] 
+        x[11] = dtl['total_acc']
+        x[12] = dtl['credit_length'] 
+        x[13] = dtl['even_loan_amount'] 
+        x[14] = dtl['revol_bal-loan'] 
+        x[15] = dtl['pctlo'] 
+        x[16] = dtl['monthly_payment'] / dtl['annual_income'] 
+        x[17] = dtl['monthly_int_payment'] / dtl['annual_income'] 
+        x[18] = dtl['revol_bal'] / dtl['annual_income'] 
+        x[19] = dtl['urate_chg'] 
+        x[20] = dtl['HPA1Yr'] 
+        x[21] = dtl['fico_score']
+        x[22] = dtl['loan_pct_income'] 
+
+        predictions = [tree.predict(x)[0] for tree in prepayment_model.estimators_]
+        dtl['prepay_risk'] = np.mean(predictions) 
+        #get bootstrap estimates for default mean estimator 
+        bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
+        dtl['prepay_max'] =  np.max(bootstrap_means)
     
-    risk = 100.0 * prod_forest.predict(x)[0]
-    '''
     except Exception as e:
-        msg = 'Error in random_forest_model.py::default_risk()'
+        msg = 'Error in random_forest_model.py::prepay_risk()'
         msg += '\n{}: Error {} in evaluating random forest\n'.format(dt.now(), str(e))
         msg +='\nInput Loan data:\n'
         for k,v in dtl.iteritems():
@@ -320,8 +314,8 @@ def default_risk_old(dtl):
         msg += '\n\n'
         print msg
         print zip(range(len(x)), x)
-        risk = 100.0
-    '''
-    return risk 
-
+        dtl['prepay_risk'] = 1.0
+        dtl['prepay_max'] = 1.0
+   
+    return dtl['prepay_max']
 

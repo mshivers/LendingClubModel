@@ -16,31 +16,34 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 parent_dir = '/Users/marcshivers/LCModel'
-#default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
-#prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
+default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
+prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
 
+'''
 
 all_grades = list('ABCDEFG')
-
+curves = prepay_curves
 for term in [36,60]:
     plt.figure()
     for grade in all_grades:
-        data = default_curves['{}{}'.format(grade,term)]
-        C = default_curves['D{}'.format(term)]
-        C = np.r_[C[0], np.diff(np.array(C))]
-        data = np.r_[data[0], np.diff(np.array(data))]  
+        data = curves['{}{}'.format(grade,term)]
+        #C = curves['D{}'.format(term)]
+        #C = np.r_[C[0], np.diff(np.array(C))]
+        #data = np.r_[data[0], np.diff(np.array(data))]  
         plt.plot(data)
     plt.title('Term: {}'.format(term))
     plt.legend(all_grades)
     plt.grid()
     plt.show()
 
-
+'''
 def make_loan(grade, term, rate, amount):
     pmt = np.pmt(rate/1200., term, amount)
-    return dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
+    loan = dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
         ('loan_amount', amount), ('int_rate', rate)])
-
+    loan['default_max'] = default_curves['{}{}'.format(grade,term)][11]
+    loan['prepay_max'] = 0.24
+    return loan
 
 
 
@@ -60,6 +63,7 @@ def calc_npv(l, discount_rate=0.10):
     
     risk_factor = 1.5
     cdefaults = (risk_factor * np.r_[base_defaults[:1],np.diff(base_defaults)]).cumsum()
+    print cdefaults[11]
     #prepay_rate[:] = 0
     #cdefaults[:] = 0
 
