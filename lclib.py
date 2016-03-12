@@ -541,13 +541,17 @@ def prestage(loan, min_rate, min_income):
     return (loanRate>=min_rate) and (income>min_income) and (loan['inquiriesLast6Months']==0)
 
 
-def invest_amount(irr, min_irr, max_invest=None):
+def invest_amount(loan, min_irr, max_invest=None):
     if max_invest==None:
         max_invest = 500
-    if irr < min_irr:
-        return 0
+    if loan['base_irr'] < min_irr:
+        stage_amount = 0 
     else:
-        return min(max_invest, 25 * np.ceil(1*(irr - min_irr)))
+        base_invest =  max(0, 25 * np.ceil(200*(loan['base_irr'] - min_irr)))
+        stress_invest =  max(0, 25 * np.ceil(400*(loan['stress_irr'] - min_irr)))
+        stage_amount = base_invest + stress_invest
+    loan['max_stage_amount'] =  min(max_invest, stage_amount) 
+
 
 def sleep_seconds(win_len=30):
      # win_len is the number of seconds to continuously check for new loans.
@@ -566,15 +570,15 @@ def detail_str(loan):
 
     pstr = 'BaseIRR: {:1.2f}%'.format(100*l['base_irr'])
     pstr += ' | StressIRR: {:1.2f}%'.format(100*l['stress_irr'])
+    pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*l['base_irr_tax'])
+    pstr += ' | StressIRRTax: {:1.2f}%'.format(100*l['stress_irr_tax'])
     pstr += ' | IntRate: {}%'.format(l['int_rate'])
-    pstr += ' | BaseNPV: {:1.2f}'.format(100*l['base_npv'])
-    pstr += ' | StressNPV: {:1.2f}'.format(100*l['stress_npv'])
 
     pstr += '\nDefaultRisk: {:1.2f}%'.format(100*l['default_risk'])
     pstr += ' | DefaultMax: {:1.2f}%'.format(100*l['default_max'])
-    pstr += ' | RiskFactor: {:1.2f}'.format(l['risk_factor'])
     pstr += ' | PrepayRisk: {:1.2f}%'.format(100*l['prepay_risk'])
     pstr += ' | PrepayMax: {:1.2f}%'.format(100*l['prepay_max'])
+    pstr += ' | RiskFactor: {:1.2f}'.format(l['risk_factor'])
 
     pstr += '\nAlpha: {:1.2f}%'.format(l['alpha'])
     pstr += ' | InitStatus: {}'.format(l['initialListStatus'])
@@ -605,7 +609,6 @@ def detail_str(loan):
     pstr += ' | MedInc: ${:1,.0f}'.format(l['med_income'])
     pstr += ' | URate: {:1.1f}%'.format(100*l['urate'])
     pstr += ' | 12mChg: {:1.1f}%'.format(100*l['urate_chg'])
-    pstr += ' | 12mRange: {:1.1f}%'.format(100*l['urate_range'])
 
     pstr += '\nHomeOwn: {}'.format(l['homeOwnership'])
     pstr += ' | PrimaryCity: {}'.format(l['primaryCity'])
@@ -971,6 +974,8 @@ def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
     a percentage defaulting each month.'''
 
     net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
+    income_tax_rate = 0.5
+    capital_gains_tax_rate = 0.2
 
     key = '{}{}'.format(min('G', l['grade']), l['term']) 
     base_cdefaults = np.array(default_curves[key])
@@ -993,7 +998,7 @@ def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
 
     # catch the case where total prepayments + total defaults > 100%  (they're estimated independently)
     if max_prepayment_pct <= prepayment_rate_12m: 
-        return 0, 0
+        return 0, 0, 0, 0
 
     # prepayment model give the odds of full prepayment in the first 12 months 
     # here we calculate the probability of prepayment just for the loans that 
@@ -1008,6 +1013,7 @@ def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
 
     # start with placeholder for time=0 investment for irr calc later
     payments = np.zeros(l['term']+1)
+    payments_after_tax = np.zeros(l['term']+1)
     
     contract_principal_balance = 1.0
     pct_loans_prepaid = 0.0
@@ -1041,21 +1047,31 @@ def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
         pct_loans_prepaid += prepayment_pct 
 
         payments[m] = interest_received + scheduled_principal_received + prepayment_amount
+
+        taxes = interest_received * net_payment_pct * income_tax_rate 
+        taxes = taxes - scheduled_principal_defaulted * capital_gains_tax_rate
+        payments_after_tax[m] = payments[m] - taxes 
         
         #print m, contract_principal_balance, payments[m], interest_received, 
         #print scheduled_principal_received , prepayment_amount, pct_loans_prepaid, pct_loans_defaulted
 
     # reduce payments by lending club service charge
     payments *= net_payment_pct
+
     npv = np.npv(monthly_discount_rate, payments) 
+    npv_after_tax = np.npv(monthly_discount_rate, payments_after_tax)
+
     # Add initial investment outflow at time=0 to calculate irr: 
     payments[0] += -1
+    payments_after_tax[0] += -1
     irr = np.irr(payments)
+    irr_after_tax = np.irr(payments_after_tax)
     
     # use same units for irr as loan interest rate
     annualized_irr = irr * 12.0
+    annualized_irr_after_tax = irr_after_tax * 12.0
 
-    return annualized_irr, npv  
+    return annualized_irr, npv, annualized_irr_after_tax, npv_after_tax
     
 
 

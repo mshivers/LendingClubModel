@@ -219,9 +219,11 @@ def calc_default_risk(dtl):
         predictions = [tree.predict(x)[0] for tree in default_model.estimators_]
         dtl['default_risk'] = np.mean(predictions) 
         #get bootstrap estimates for default mean estimator 
-        bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
-        dtl['default_max'] = np.max(bootstrap_means)
-        dtl['default_std'] = np.std(bootstrap_means)
+        #bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
+        #dtl['default_max'] = np.max(bootstrap_means)
+
+        #65th percentile close to the bootstrap max above, but much faster to calculate
+        dtl['default_max'] =  np.percentile(predictions, 65)
     
     except Exception as e:
         msg = 'Error in random_forest_model.py::default_risk()'
@@ -300,10 +302,15 @@ def calc_prepayment_risk(dtl):
 
         predictions = [tree.predict(x)[0] for tree in prepayment_model.estimators_]
         dtl['prepay_risk'] = np.mean(predictions) 
+
         #get bootstrap estimates for default mean estimator 
-        bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
-        dtl['prepay_max'] =  np.max(bootstrap_means)
+        #bootstrap_means = [np.mean(np.random.choice(predictions, 100)) for _ in range(1000)]
+        #dtl['prepay_max'] =  np.max(bootstrap_means)
+
+        #65th percentile close to the bootstrap max above, but much faster to calculate
+        dtl['prepay_max'] =  np.percentile(predictions, 65)
     
+
     except Exception as e:
         msg = 'Error in random_forest_model.py::prepay_risk()'
         msg += '\n{}: Error {} in evaluating random forest\n'.format(dt.now(), str(e))

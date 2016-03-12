@@ -289,20 +289,19 @@ def main(min_irr=11, max_invest=500):
                     rfm.calc_prepayment_risk(loan)        
 
                     # calc standard irr
-                    loan['base_irr'], loan['base_npv'] = lclib.calc_npv(loan, loan['default_risk'], 
-                            loan['prepay_risk'], min_irr/100.)
+                    npv = lclib.calc_npv(loan, loan['default_risk'], loan['prepay_risk'], min_irr/100.)
+                    loan['base_irr'], loan['base_npv'], loan['base_irr_tax'], loan['base_npv_tax'] = npv
 
                     # calc standard irr
-                    loan['stress_irr'], loan['stress_npv'] = lclib.calc_npv(loan, loan['default_max'], 
-                            loan['prepay_max'], min_irr/100.)
+                    npv = lclib.calc_npv(loan, loan['default_max'], loan['prepay_max'], min_irr/100.)
+                    loan['stress_irr'], loan['stress_npv'], loan['stress_irr_tax'], loan['stress_npv_tax'] = npv
 
                     # the mults below are empirical estimates from 2010 loans 
                     # for total loss percentages as a mult of year 1 defaults.
                     mult = 1.14 if loan['loan_term']==36 else 1.72 
                     loan['alpha'] = loan['int_rate'] - mult * 100 * loan['default_risk']
-                    loan['max_stage_amount'] = lclib.invest_amount(100*loan['base_irr'], 
-                                                                   min_irr=min_irr, 
-                                                                   max_invest=max_invest) 
+                    lclib.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 
+
                     # Don't invest in loans that were already passed over as whole loans
                     if loan['initialListStatus']=='W':
                         loan['max_stage_amount'] = 0
