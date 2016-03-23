@@ -34,6 +34,34 @@ def parse_date(dtstr):
     return dt.strptime(dtstr.split('T')[0], '%Y-%m-%d')
 
 
+def get_seasoned_loans(loans):
+    seasoned = [l for l in loans if l['loanStatus'].startswith('Current')]
+    for l in seasoned:
+        start = parse_date(l['issueDate'])
+        l['dob'] = (dt.now() - start).days 
+
+    seasoned = [l for l in seasoned if l['dob']>365]
+    seasoned = sorted(seasoned, key=lambda x: x['dob'])
+
+    df = pd.concat([pd.Series(seasoned[i]) for i in range(len(seasoned))], axis=1).T
+    return df[['loanId', 'noteId', 'noteAmount', 'loanStatus', 'dob', 'principalPending', 
+        'grade', 'interestRate','loanLength', 'paymentsReceived', 'creditTrend']]
+
+
+def get_late_loans(loans):
+    late = [l for l in loans if l['loanStatus'].startswith('Late')]
+    for l in late:
+        if l['lastPaymentDate']:
+            start = parse_date(l['lastPaymentDate'])
+        else:
+            start = parse_date(l['issueDate'])
+        l['late_days'] = (dt.now() - start).days
+    late = sorted(late, key=lambda x: x['late_days'])
+    df = pd.concat([pd.Series(late[i]) for i in range(len(late))], axis=1).T
+    return df[['loanId', 'noteId', 'noteAmount', 'loanStatus', 'currentPaymentStatus', 'late_days',
+        'principalPending', 'grade', 'interestRate','loanLength', 'paymentsReceived', 'creditTrend']]
+
+
 def default_wgt(note):
     wgt = 0
     if note['loanStatus'] == 'Charged Off':

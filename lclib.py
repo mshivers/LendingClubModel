@@ -84,13 +84,13 @@ def clean_title(x):
         x = x.replace(tok,'')
     return x
 
-def load_training_data():
+def load_training_data(regen=False):
 
     fname = os.path.join(data_dir, cached_training_data_fname)
-    if os.path.exists(fname):
+    if os.path.exists(fname) and not regen:
         update_dt = dt.fromtimestamp(os.path.getmtime(fname))
         days_old = (dt.now() - update_dt).days 
-        print 'Cached LC data created on {}, and is {} days old'.format(update_dt, days_old)
+        print 'Using cached LC data created on {}; cache is {} days old'.format(update_dt, days_old)
         df = pd.read_csv(fname)
     else:
         print 'Cache not found. Generating cache from source data'

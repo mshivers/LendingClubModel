@@ -2,9 +2,6 @@
 #    1. use 'Blank' instead of 'blank' so it doesn't get lumped in with lower case feature
 
 
-
-
-
 # downloads the monthly non-seasonally adjusted employment data, and saves csv files for
 # monthly labor force size, and number of unemployed by fips county code, to use to construct
 # historical employment statistics by zip code for model fitting
@@ -19,6 +16,25 @@ parent_dir = '/Users/marcshivers/LCModel'
 default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
 prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
 
+
+wynd = list()
+ids = set()
+for i, l in enumerate(ira):
+    print i
+    idx = stats['id']==l['loanId']
+    if idx.sum():
+        zip = stats.ix[idx, 'zip_code'].values[0]
+        zip = str(int(zip))
+        if str(zip) in z2loc.keys():
+            for loc in z2loc[zip]:
+                loc = str(loc)
+                if isinstance(loc, str):
+                    if loc.strip().endswith('NM') or loc.strip().endswith('OK'):
+                        if l['loanId'] not in ids:
+                            wynd.append(l)
+                            ids.add(l['loanId'])
+
+                        print l, '\n\n\n'
 '''
 
 all_grades = list('ABCDEFG')
@@ -44,68 +60,6 @@ def make_loan(grade, term, rate, amount):
     loan['default_max'] = default_curves['{}{}'.format(grade,term)][11]
     loan['prepay_max'] = 0.24
     return loan
-
-
-
-def calc_npv(l, discount_rate=0.10):
-    ''' All calculations assume a loan amount of $1.
-    Note the default curves are the cumulative percent of loans that have defaulted prior 
-    to month m; the prepayment curves are the average percentage of outstanding balance that is prepaid 
-    each month (not cumulative) where the average is over all loans that have not yet matured (regardless 
-    of prepayment or default).  We'll assume that the prepayments are in full'''
-
-    net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
-
-    key = '{}{}'.format(min('E', l['grade']), l['term']) 
-    print key
-    prepay_rate = np.array(prepay_curves[key])
-    base_defaults = np.array(default_curves[key])
-    
-    risk_factor = 1.5
-    cdefaults = (risk_factor * np.r_[base_defaults[:1],np.diff(base_defaults)]).cumsum()
-    print cdefaults[11]
-    #prepay_rate[:] = 0
-    #cdefaults[:] = 0
-
-    monthly_int_rate = l['int_rate']/1200.
-    monthly_discount_rate = (1 + discount_rate) ** (1/12.) - 1
-    monthly_payment = l['monthly_payment'] / l['loan_amount']
-
-    # start with placeholder for time=0 investment for irr calc later
-    payments = np.zeros(l['term']+1)
-    
-    principal_balance = 1
-    # add monthly payments
-    for m in range(1, l['term']+1):
-
-        interest_due = principal_balance * monthly_int_rate
-        principal_due = monthly_payment - interest_due
-
-        # prepayment rate is a pct of ending balance
-        principal_balance -= principal_due
-        prepayment_amt = principal_balance * prepay_rate[m-1]
-        
-        scheduled_amt = monthly_payment * (1 - cdefaults[m-1])
-        payments[m] = prepayment_amt + scheduled_amt
-        
-        # reduce monthly payment to reflect this month's prepayment
-        principal_balance -= prepayment_amt
-        monthly_payment *= (1 - prepay_rate[m-1])
-
-
-    # reduce payments by lending club service charge
-    payments *= net_payment_pct
-    npv = np.npv(monthly_discount_rate, payments) 
-
-    # Add initial investment outflow at time=0 to calculate irr: 
-    payments[0] += -1
-    irr = np.irr(payments)
-    
-    l['irr'] = -1 + (1 + irr) ** 12
-    l['npv'] = 100 * npv    
-
-    return l, base_defaults, cdefaults 
-    
 
 
 

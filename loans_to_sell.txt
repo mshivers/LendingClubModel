@@ -1,0 +1,21 @@
+ira loans in WY or ND
+              id                 emp_title
+103544  29684412   corporate sales manager
+125331  26209469  Flo Tester/Relief Pumper
+126466  26168415                Consultant
+
+
+
+taxable loans in WY or ND
+              id                        emp_title
+45258   37800783     Physical Therapist Assistant
+48245   36880331                       Supervisor
+103544  29684412          corporate sales manager
+125331  26209469         Flo Tester/Relief Pumper
+335474  65454937  Sr. Telecommunications Engineer
+389464  61519089              Locomotive Engineer
+441327  58973498                   Safety Manager
+
+
+Sell this one from your IRA: Samson resources is an E&P company (loan is "Payment Processing" currently)
+214463  48494702          Associate Accountant                        Samson resources 

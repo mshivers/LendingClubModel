@@ -18,11 +18,12 @@ if 'df' not in locals().keys():
     df = pd.read_csv('/Users/marcshivers/LCModel/data/PMTHIST_ALL_20160117_v1.csv', 
             sep=',') #, usecols=cols)
     print 'After read_csv',  (now() - t).total_seconds()
-    df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
 
     g_id = df.groupby('LOAN_ID')
     print 'After groupby by ID', (now() - t).total_seconds()
 
+
+    1/0
     last = g_id.last()
     first = g_id.first()
     print 'After last()', (now() - t).total_seconds()
