@@ -82,6 +82,7 @@ try:
     data = pd.read_csv(link, header=None, names=cols)
     data.to_csv(os.path.join(parent_dir, 'HPI_AT_metro.csv'))
 except:
+    print 'Failed to read FHFA website HPI data; using cached data'
     data = pd.read_csv(os.path.join(parent_dir,'HPI_AT_metro.csv'), header=None, names=cols)
 
 data = data[data['index']!='-']

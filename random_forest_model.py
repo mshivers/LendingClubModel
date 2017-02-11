@@ -10,6 +10,7 @@ from sklearn.externals import joblib
 import lclib
 
 model_hash = 'YMHVDZ'
+#model_hash = 'HLKMGF'
 model_path = os.path.join(lclib.parent_dir, model_hash)
 
 default_model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')

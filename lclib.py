@@ -16,9 +16,14 @@ NEGATIVE_ONE = -1
 #parent_dir = '/home/apprun/LCModel/LCModel'
 parent_dir = '/Users/marcshivers/LCModel'
 data_dir = os.path.join(parent_dir, 'data')
+loanstats_dir = os.path.join(parent_dir, 'data/loanstats')
+training_data_dir = os.path.join(parent_dir, 'data/training_data')
 cached_training_data_fname = 'cached_training_data.csv'
+
 update_hrs = [1,5,9,13,17,21]
-oos_cutoff = np.datetime64('2015-01-01')
+
+#oos_cutoff = np.datetime64('2015-04-15')
+oos_cutoff = '2016-01-01'
 
 # clean dataframe
 home_map = dict([('ANY', 0), ('NONE',0), ('OTHER',0), ('RENT',1), ('MORTGAGE',2), ('OWN',3)])
@@ -86,7 +91,7 @@ def clean_title(x):
 
 def load_training_data(regen=False):
 
-    fname = os.path.join(data_dir, cached_training_data_fname)
+    fname = os.path.join(training_data_dir, cached_training_data_fname)
     if os.path.exists(fname) and not regen:
         update_dt = dt.fromtimestamp(os.path.getmtime(fname))
         days_old = (dt.now() - update_dt).days 
@@ -101,12 +106,16 @@ def load_training_data(regen=False):
 
 def cache_training_data():
 
-    fname = os.path.join(data_dir, 'LoanStats3{}_securev1.csv')
-    da = pd.read_csv(fname.format('a'), header=1, nrows=39786)
-    db = pd.read_csv(fname.format('b'), header=1)
-    dc = pd.read_csv(fname.format('c'), header=1)
-    dd = pd.read_csv(fname.format('d'), header=1)
-    df = pd.concat((da,db,dc,dd), ignore_index=True)
+    fname = os.path.join(loanstats_dir, 'LoanStats3{}_securev1.csv')
+    fname2 = os.path.join(loanstats_dir, 'LoanStats_securev1_{}.csv')
+    d1 = pd.read_csv(fname.format('a'), header=1, nrows=39786)
+    d2 = pd.read_csv(fname.format('b'), header=1)
+    d3 = pd.read_csv(fname.format('c'), header=1)
+    d4 = pd.read_csv(fname.format('d'), header=1)
+    d5 = pd.read_csv(fname2.format('2016Q1'), header=1)
+    d6 = pd.read_csv(fname2.format('2016Q2'), header=1)
+    d7 = pd.read_csv(fname2.format('2016Q3'), header=1)
+    df = pd.concat((d1,d2,d3,d4,d5,d6,d7), ignore_index=True)
 
     # take subset of good data
     idx1 = ~(df[['last_pymnt_d', 'issue_d', 'annual_inc']].isnull()).any(1)
@@ -213,10 +222,11 @@ def cache_training_data():
 
     clean_title_count = Counter(df['clean_title'].values)
     clean_titles_sorted = [ttl[0] for ttl in sorted(clean_title_count.items(), key=lambda x:-x[1])]
-    clean_title_map = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
+    clean_title_rank_map = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
+    json.dump(clean_title_rank_map, open(os.path.join(training_data_dir, 'clean_title_rank_map.json'),'w'))
 
     # process job title features
-    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_map[x])
+    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_rank_map[x])
   
     one_year = 365*24*60*60*1e9
     df['credit_length'] = ((df['issue_d'] - df['earliest_cr_line']).astype(int)/one_year)
@@ -273,7 +283,7 @@ def cache_training_data():
     df['cur_bal_pct_loan_amnt'] = df['tot_cur_bal'] / df['loan_amnt'] 
     df['loan_pct_income'] = df['loan_amnt'] / df['annual_inc']
 
-    save_to = os.path.join(data_dir, cached_training_data_fname)
+    save_to = os.path.join(training_data_dir, cached_training_data_fname)
     df.to_csv(save_to)
 
 
@@ -363,11 +373,14 @@ def load_tok4_capitalization_log_odds_func():
     return log_odds_func
 
 
-def create_clean_title_log_odds_json(df, fname='ctlo.json', tok_len=4, fld_name='clean_title',
+def create_clean_title_log_odds_json(df=None, fname='ctloC.json', tok_len=4, fld_name='clean_title',
         target_name='12m_wgt_default'):
+    if df == None:
+        df = load_training_data()
     #employer name was in the emp_title field before 9/24/13
     
-    idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff)
+    # include only data before oos cutoff, and for C-grade loans or worse
+    idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff) & (df['grade']>=2)
     training = df[idx].copy()
 
     toks = list()
@@ -401,8 +414,12 @@ def create_clean_title_log_odds_json(df, fname='ctlo.json', tok_len=4, fld_name=
     return odds_map
 
 
-def create_capitalization_log_odds_json(df, fname='caplo.json', tok_len=4, fld_name='emp_title'):
-    idx = (df['issue_d'] < oos_cutoff)
+def create_capitalization_log_odds_json(df=None, fname='caploC.json', tok_len=4, fld_name='emp_title'):
+    if df == None:
+        df = load_training_data()
+
+    # include only data before oos cutoff, and for C-grade loans or worse
+    idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff) & (df['grade']>=2)
     df = df[idx].copy()
 
     toks = list()
@@ -418,7 +435,7 @@ def create_capitalization_log_odds_json(df, fname='caplo.json', tok_len=4, fld_n
     C = 2000 #regularized number of mean defaults
     for _, row in tok_df.iterrows():
         tok, freq = row
-        if freq < 5000:
+        if freq < 2000:
             continue 
         df['has_tok'] = df['tokenized'].apply(lambda x: tok in x)
         grp = df.groupby('has_tok')
@@ -580,8 +597,7 @@ def detail_str(loan):
     pstr += ' | PrepayMax: {:1.2f}%'.format(100*l['prepay_max'])
     pstr += ' | RiskFactor: {:1.2f}'.format(l['risk_factor'])
 
-    pstr += '\nAlpha: {:1.2f}%'.format(l['alpha'])
-    pstr += ' | InitStatus: {}'.format(l['initialListStatus'])
+    pstr += '\nInitStatus: {}'.format(l['initialListStatus'])
     pstr += ' | Staged: ${}'.format(l['staged_amount'])
 
     pstr += '\nLoanAmnt: ${:1,.0f}'.format(l['loanAmount'])
@@ -764,6 +780,7 @@ def load_bls():
     if days_old > 14:
         try:
             link = 'http://www.bls.gov/lau/laucntycur14.txt'
+            link = 'http://www.bls.gov/web/metro/laucntycur14.txt'
             cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
                 'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
             file = requests.get(link)

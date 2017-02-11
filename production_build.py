@@ -28,103 +28,18 @@ with open(os.path.join(model_dir, 'build_file.py'), 'w') as f:
 if 'df' not in locals().keys():
     df = lclib.load_training_data()
 
-if 'urate' not in df.columns:
-    urate = pd.read_csv(os.path.join(parent_dir, 'urate_by_3zip.csv'), index_col=0)
-    ur = pd.DataFrame(np.zeros((len(urate),999))*np.nan,index=urate.index, columns=[str(i) for i in range(1,1000)])
-    ur.ix[:,:] = urate.median(1).values[:,None]
-    ur.ix[:,urate.columns] = urate
-    avg_ur = pd.rolling_mean(ur, 12)
-    ur_chg = ur - ur.shift(12)
-
-    hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
-    missing_cols = [str(col) for col in range(0,1000) if str(col) not in hpa4.columns]
-    mean_hpa4 = hpa4.mean(1)
-    for c in missing_cols:
-        hpa4[c] = mean_hpa4
-
-    z2mi = json.load(open(os.path.join(parent_dir, 'zip2median_inc.json'),'r'))
-    z2mi = dict([(int(z), float(v)) for z,v in zip(z2mi.keys(), z2mi.values())])
-    z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
-
-    ttl_words = Counter([word for ttl in df['clean_title'].values 
-                                for word in str(ttl).split()])
-    ttl_words_sorted = sorted(ttl_words.items(), key=lambda x:-x[1])
-    ttl_word_map = dict(zip([w[0] for w in ttl_words_sorted], range(len(ttl_words_sorted))))
-    json.dump(ttl_word_map, open(os.path.join(model_dir, 'prod_clean_title_words_map.json'),'w'))
-
-    clean_title_count = Counter(df['clean_title'].values)
-    clean_titles_sorted = [ttl[0] for ttl in sorted(clean_title_count.items(), key=lambda x:-x[1])]
-    clean_title_map = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
-    json.dump(clean_title_map, open(os.path.join(model_dir, 'prod_clean_title_map.json'),'w'))
-
-    # process job title features
-    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_map[x])
-
-    one_year = 365*24*60*60*1e9
-    df['credit_length'] = ((df['issue_d'] - df['earliest_cr_line']).astype(int)/one_year).apply(lambda x: max(-1,x))
-    df['even_loan_amnt'] = df['loan_amnt'].apply(lambda x: float(x==round(x,-3)))
-    df['revol_bal-loan'] = df['revol_bal'] - df['loan_amnt']
-    df['int_pymt'] = df['loan_amnt'] * df['int_rate'] / 1200.0
-    df['revol_bal_pct_inc'] = df['revol_bal'] / df['annual_inc']
-    
-    df['urate_d'] = df['issue_d'].apply(lambda x: int(str((x-td(days=60)))[:7].replace('-','')))
-    df['urate'] = [ur[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['avg_urate'] = [avg_ur[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['urate_chg'] = [ur_chg[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['max_urate'] = [ur[a][:b].max() for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['min_urate'] = [ur[a][:b].min() for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['urate_range'] = df['max_urate'] - df['min_urate'] 
-
-    df['mod_rate'] = df['int_rate'].apply(lambda x:(int(10*x)-10*int(x)))
-    df['med_inc'] = df['zip_code'].apply(lambda x:z2mi[x])
-    df['pct_med_inc'] = df['annual_inc'] / df['med_inc']
-    df['pymt_pct_inc'] = df['installment'] / df['annual_inc'] 
-    df['int_pct_inc'] = df['int_pymt'] / df['annual_inc'] 
-
-    df['hpa_date'] = df['issue_d'].apply(lambda x:x-td(days=120))
-    df['hpa_qtr'] = df['hpa_date'].apply(lambda x: 100*x.year + x.month/4 + 1)
-    df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['zip_code'].apply(lambda x: str(int(x))))]
-
-    tok4_clean_title_log_odds_dict = json.load(open('ctloC.json','r'))
-    json.dump(tok4_clean_title_log_odds_dict, open(os.path.join(model_dir, 
-        'prod_tok4_clean_title_log_odds.json'),'w'))
-    tok4_clean_title_log_odds_dict = defaultdict(lambda :0, tok4_clean_title_log_odds_dict)
-    odds_map = lambda x: lclib.calc_log_odds('^{}$'.format(x), tok4_clean_title_log_odds_dict, 4)
-    df['ctloC'] = df['clean_title'].apply(odds_map)
-
-    df['title_capitalization'] = df['emp_title'].apply(lclib.tokenize_capitalization)
-    tok4_capitalization_log_odds_dict = json.load(open('caploC.json','r'))
-    json.dump(tok4_capitalization_log_odds_dict, open(os.path.join(model_dir, 
-        'prod_tok4_capitalization_log_odds.json'),'w'))
-    tok4_capitalization_log_odds_dict = defaultdict(lambda :0, tok4_capitalization_log_odds_dict)
-    odds_map = lambda x: lclib.calc_log_odds(x, tok4_capitalization_log_odds_dict, 4)
-    df['caploC'] = df['title_capitalization'].apply(odds_map)
-
-
 
 # decision variables: 
 dv = ['loan_amnt', 
-      #'int_rate', 
       'installment', 
-      #'term',
       'sub_grade', 
       'purpose', 
       'emp_length', 
       'home_ownership', 
       'annual_inc', 
       'dti',
-      #'delinq_2yrs', 
-      #'inq_last_6mths', 
-      #'mths_since_last_delinq', 
-      #'mths_since_last_record', 
-      #'mths_since_last_major_derog',
-      #'open_acc', 
-      #'pub_rec', 
-      #'revol_bal', 
       'revol_util', 
       'total_acc', 
-      #'verification_status',
-      #'int_pymt', 
       'credit_length',
       'even_loan_amnt', 
       'revol_bal-loan', 
@@ -139,14 +54,9 @@ dv = ['loan_amnt',
       'avg_urate',
       'urate_chg', 
       'urate_range',
-      #'mod_rate',
-      #'med_inc', 
-      #'reg_tok4_clean_title_log_odds',
       'hpa4',
-      #'fico_range_low',
-      #'debt-loan_amnt',
-      #'debt_pct_loan_amnt'
     ]
+
 
 iv = '12m_wgt_default'
 extra_cols = [iv, 'issue_d']
@@ -158,12 +68,12 @@ fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
 fit_data = fit_data.sort('issue_d')
 
-oos_cutoff = dt(2015,1,1) 
+oos_cutoff = lclib.oos_cutoff 
 isdx = fit_data['issue_d'] < oos_cutoff 
 x_train = fit_data.loc[isdx,:][dv].values
 y_train = fit_data.loc[isdx,:][iv].values
 
-oos = ~isdx & (fit_data['issue_d']<dt(2015,3,1))
+oos = ~isdx & (fit_data['issue_d']< '2015-06-15')
 x_test = fit_data.loc[oos,:][dv].values
 y_test = fit_data.loc[oos,:][iv].values
 

@@ -53,7 +53,7 @@ fit_data = fit_data.dropna()
 
 oos_cutoff = str(oos_cutoff)
 cv_begin = oos_cutoff
-cv_end = str(dt(2015,3,1))
+cv_end = str(dt(2016,3,1))
 print 'OOS Cutoff: {}'.format(oos_cutoff)
 
 fit_data = fit_data.sort('issue_d')

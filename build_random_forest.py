@@ -17,18 +17,6 @@ from lclib import oos_cutoff, construct_loan_dict, calc_npv
 if 'df' not in locals().keys():
     df = load_training_data()
 
-pctlo_dict = json.load(open(os.path.join(parent_dir, 'pctlo.json'),'r'))
-pctlo = defaultdict(lambda :0, pctlo_dict)
-odds_map = lambda x: calc_log_odds('^{}$'.format(x), pctlo, 4)
-df['pctlo'] = df['clean_title'].apply(odds_map)
-
-pctloC_dict = json.load(open(os.path.join(parent_dir, 'pctloC.json'),'r'))
-pctloC = defaultdict(lambda :0, pctloC_dict)
-odds_map = lambda x: calc_log_odds('^{}$'.format(x), pctloC, 4)
-df['pctloC'] = df['clean_title'].apply(odds_map)
-
-
-
 # decision variables: 
 dv = ['loan_amnt', 
       'int_rate', 
@@ -58,8 +46,6 @@ dv = ['loan_amnt',
       'urate',
       'pct_med_inc', 
       'clean_title_rank', 
-      'pctlo',
-      'pctloC',
       'ctloC',
       'caploC', 
       'pymt_pct_inc', 
@@ -76,6 +62,34 @@ dv = ['loan_amnt',
       'cur_bal_pct_loan_amnt'
     ]
 
+dv = ['loan_amnt', 
+      'installment', 
+      'sub_grade', 
+      'purpose', 
+      'emp_length', 
+      'home_ownership', 
+      'annual_inc', 
+      'dti',
+      'revol_util', 
+      'total_acc', 
+      'credit_length',
+      'even_loan_amnt', 
+      'revol_bal-loan', 
+      'urate',
+      'pct_med_inc', 
+      'clean_title_rank', 
+      'ctloC',
+      'caploC', 
+      'pymt_pct_inc', 
+      'int_pct_inc', 
+      'revol_bal_pct_inc',
+      'avg_urate',
+      'urate_chg', 
+      'urate_range',
+      'hpa4',
+    ]
+
+
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate']
                 if tmp not in dv]
@@ -85,7 +99,7 @@ fit_data = fit_data.dropna()
 
 oos_cutoff = str(oos_cutoff)
 cv_begin = oos_cutoff
-cv_end = str(dt(2015,3,1))
+cv_end = str(dt(2015,6,1))
 print 'OOS Cutoff: {}'.format(oos_cutoff)
 
 fit_data = fit_data.sort('issue_d')

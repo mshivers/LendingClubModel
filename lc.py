@@ -146,7 +146,6 @@ def add_to_known_loans(known_loans, new_loans):
             l['default_risk'] = 100
             l['base_irr'] = -100
             l['stress_irr'] = -100
-            l['alpha'] = -100
             l['search_time'] = dt.now()
             l['inputs_parsed'] = False 
             l['api_details_parsed'] = False 
@@ -296,10 +295,6 @@ def main(min_irr=11, max_invest=500):
                     npv = lclib.calc_npv(loan, loan['default_max'], loan['prepay_max'], min_irr/100.)
                     loan['stress_irr'], loan['stress_npv'], loan['stress_irr_tax'], loan['stress_npv_tax'] = npv
 
-                    # the mults below are empirical estimates from 2010 loans 
-                    # for total loss percentages as a mult of year 1 defaults.
-                    mult = 1.14 if loan['loan_term']==36 else 1.72 
-                    loan['alpha'] = loan['int_rate'] - mult * 100 * loan['default_risk']
                     lclib.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 
 
                     # Don't invest in loans that were already passed over as whole loans
@@ -312,10 +307,10 @@ def main(min_irr=11, max_invest=500):
                 #Stage loan
                 amount_to_invest = loan['max_stage_amount'] - loan['staged_amount']
                 if amount_to_invest>0:
-                    if loan['default_risk'] < 0.01:
-                        amount_staged = stage_order_fast(lc_tax, loan['id'], amount_to_invest)
-                    else:
-                        amount_staged = stage_order_fast(lc_ira, loan['id'], amount_to_invest)
+                    amount_staged = 0
+                    #if loan['base_irr_tax'] > 0.05:
+                    #    amount_staged = stage_order_fast(lc_tax, loan['id'], 500)
+                    amount_staged += stage_order_fast(lc_ira, loan['id'], amount_to_invest)
 
                     loan['staged_amount'] += amount_staged
                     loan['staged_time'] = dt.now()

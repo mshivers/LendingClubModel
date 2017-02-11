@@ -12,73 +12,73 @@ pd.set_option('display.width', 200)
 pd.set_option('display.max_columns', 100)
 t = now()
 
-if 'df' not in locals().keys():
-    cols = ['LOAN_ID', 'PBAL_BEG_PERIOD', 'PBAL_END_PERIOD', 'MONTHLYCONTRACTAMT', 'InterestRate', 
-            'VINTAGE', 'IssuedDate', 'RECEIVED_AMT', 'DUE_AMT', 'PERIOD_END_LSTAT', 'MOB', 'term', 'grade']
+PAYMENTS_FILE = '/Users/marcshivers/LCModel/data/PMTHIST_ALL_20170117_v1.csv'
 
-    df = pd.read_csv('/Users/marcshivers/LCModel/data/PMTHIST_ALL_20160117_v1.csv', 
-            sep=',', usecols=cols)
+cols = ['LOAN_ID', 'PBAL_BEG_PERIOD', 'PBAL_END_PERIOD', 'MONTHLYCONTRACTAMT', 'InterestRate', 
+        'VINTAGE', 'IssuedDate', 'RECEIVED_AMT', 'DUE_AMT', 'PERIOD_END_LSTAT', 'MOB', 'term', 'grade']
 
-    print 'After read_csv',  (now() - t).total_seconds()
-    df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
-    df['delinquent_amt'] = np.maximum(0, -(df['RECEIVED_AMT'] - df['DUE_AMT']))
-    df['mob_if_current'] = 0
-    idx = (df.PERIOD_END_LSTAT=='Current') | (df.PERIOD_END_LSTAT == 'Fully Paid')
-    df.ix[idx, 'mob_if_current'] = df.ix[idx, 'MOB']
+df = pd.read_csv(PAYMENTS_FILE, sep=',', usecols=cols)
 
-    g_id = df.groupby('LOAN_ID')
-    print 'After groupby by ID', (now() - t).total_seconds()
-    first = g_id.first()
-    last = g_id.last()
+print 'After read_csv',  (now() - t).total_seconds()
+df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
+df['delinquent_amt'] = np.maximum(0, -(df['RECEIVED_AMT'] - df['DUE_AMT']))
+df['mob_if_current'] = 0
+idx = (df.PERIOD_END_LSTAT=='Current') | (df.PERIOD_END_LSTAT == 'Fully Paid')
+df.ix[idx, 'mob_if_current'] = df.ix[idx, 'MOB']
 
-    print 'After first/last', (now() - t).total_seconds()
-    data = first[['PBAL_BEG_PERIOD', 'InterestRate', 'MONTHLYCONTRACTAMT', 
-        'VINTAGE', 'IssuedDate', 'term', 'grade']].copy()
-    data['last_status'] = last['PERIOD_END_LSTAT']
-    data['last_balance'] = last['PBAL_END_PERIOD']
-    data['age'] = last['MOB']
+g_id = df.groupby('LOAN_ID')
+print 'After groupby by ID', (now() - t).total_seconds()
+first = g_id.first()
+last = g_id.last()
 
-    data['last_current_mob'] = g_id['mob_if_current'].max()
-    data['max_prepayment'] = g_id['prepay_amt'].max()
-    data['max_delinquency'] = g_id['delinquent_amt'].max()
+print 'After first/last', (now() - t).total_seconds()
+data = first[['PBAL_BEG_PERIOD', 'InterestRate', 'MONTHLYCONTRACTAMT', 
+    'VINTAGE', 'IssuedDate', 'term', 'grade']].copy()
+data['last_status'] = last['PERIOD_END_LSTAT']
+data['last_balance'] = last['PBAL_END_PERIOD']
+data['age'] = last['MOB']
 
-    data = data.rename(columns=lambda x: x.lower())
+data['last_current_mob'] = g_id['mob_if_current'].max()
+data['max_prepayment'] = g_id['prepay_amt'].max()
+data['max_delinquency'] = g_id['delinquent_amt'].max()
 
-    default_status = ['Charged Off', 'Default', 'Late (31-120 days)']
-    g = data.groupby(['issueddate', 'term', 'grade'])
+data = data.rename(columns=lambda x: x.lower())
 
-    summary = dict()
-    for k in g.groups.keys():
-        v = g.get_group(k)
-        max_age = min(k[1], v['age'].max())
-        N = len(v)
-        default_mob = v.ix[v.last_status.isin(default_status), 'last_current_mob'].values
-        c = Counter(default_mob) 
-        default_counts = sorted(c.items(), key=lambda x:x[0])
-        summary[k] = (N, max_age, default_counts) 
+default_status = ['Charged Off', 'Default', 'Late (31-120 days)']
+g = data.groupby(['issueddate', 'term', 'grade'])
 
-    defaults = np.zeros((len(summary), 63), dtype=np.int)
-    defaults[:,0] = [v[0] for v in summary.values()]
-    defaults[:,1] = [v[1] for v in summary.values()]
-    index = pd.MultiIndex.from_tuples(summary.keys(), names=['issue_month', 'term', 'grade'])
+summary = dict()
+for k in g.groups.keys():
+    v = g.get_group(k)
+    max_age = min(k[1], v['age'].max())
+    N = len(v)
+    default_mob = v.ix[v.last_status.isin(default_status), 'last_current_mob'].values
+    c = Counter(default_mob) 
+    default_counts = sorted(c.items(), key=lambda x:x[0])
+    summary[k] = (N, max_age, default_counts) 
 
-    issued = defaults.copy()
+defaults = np.zeros((len(summary), 63), dtype=np.int)
+defaults[:,0] = [v[0] for v in summary.values()]
+defaults[:,1] = [v[1] for v in summary.values()]
+index = pd.MultiIndex.from_tuples(summary.keys(), names=['issue_month', 'term', 'grade'])
 
-    for i, v in enumerate(summary.values()):
-        issued[i,2:3+v[1]] = v[0]
-        for months_paid, num in v[2]:
-           defaults[i, 2+months_paid] = num
-        
-    cols = ['num_loans', 'max_age'] + range(61)
-    defaults = pd.DataFrame(data=defaults, index=index, columns=cols).reset_index()   
-    issued = pd.DataFrame(data=issued, index=index, columns=cols).reset_index()    
+issued = defaults.copy()
 
-    defaults['grade'] = np.minimum(defaults['grade'], 'G')
-    issued['grade'] = np.minimum(issued['grade'], 'G')
+for i, v in enumerate(summary.values()):
+    issued[i,2:3+v[1]] = v[0]
+    for months_paid, num in v[2]:
+       defaults[i, 2+min(v[1], months_paid)] = num
+    
+cols = ['num_loans', 'max_age'] + range(61)
+defaults = pd.DataFrame(data=defaults, index=index, columns=cols).reset_index()   
+issued = pd.DataFrame(data=issued, index=index, columns=cols).reset_index()    
 
-    g_default = defaults.groupby(['term', 'grade']).sum()
-    g_issued = issued.groupby(['term', 'grade']).sum()
-    default_rates = (g_default / g_issued).ix[:, 0:]
+defaults['grade'] = np.minimum(defaults['grade'], 'G')
+issued['grade'] = np.minimum(issued['grade'], 'G')
+
+g_default = defaults.groupby(['term', 'grade']).sum()
+g_issued = issued.groupby(['term', 'grade']).sum()
+default_rates = (g_default / g_issued).ix[:, 0:]
 
 default_curves = dict()
 for i, r in default_rates.iterrows():
@@ -113,6 +113,6 @@ for term in [36,60]:
     plt.grid()
     plt.show()
 
-json.dump(default_curves, open('/Users/marcshivers/LCModel/default_curves.json', 'w'), indent=4)
+json.dump(default_curves, open('/Users/marcshivers/LCModel/default_curves_new.json', 'w'), indent=4)
 
 

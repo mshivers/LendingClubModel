@@ -6,12 +6,47 @@ Update employment data:
  
 run construct_datasets.py to update house-price data
 
-in lclib, update the oos_cutoff date at the top of the file
+# Download most recent LendingClub data:
+1. download the most recent Payments History Files (All Payments version) at http://additionalstatistics.lendingclub.com/
+and unzip the downloaded file and save to LCModel/data/.  Note this file will be many GBs large.
+2. Download the Loan Data from https://www.lendingclub.com/info/download-data.action (make sure you're logged in to your LendingClub account wwhen you do this; you get a more restricted dataset if you are not logged in).  Download all of the files, not just the one with the most recent loans, since these files contain current loan status for all loans.  Unzip the files and save to data/loanstats/
+
+In estimate_default_curves.py and estimate_prepayments_curves.py, change the PAYMENTS_FILE variable points to the current payments csv file.
+In lclib.py::cache_training_data() make sure the list of files it opens includes every LoanStats file you just downloaded.
+
+
+# recalculated default and prepayment curves from investor payment data:
+run estimate_default_curves.py
+run estimate_prepayement_curves.py
+(need to rename the output files so the prod model picks up the new files).
+
+in lclib.py, update the oos_cutoff date at the top of the file
 
 update the log odds json files:
+# need to wrap this up in a single function that estimates all the log odds files: ctloC, caploC, pctlo, and saves them somewhere the production_build.py script can copy over to the prod subdirectory.
+# TO FIX: currently the training data and log odds calculator are circular: log odds uses training data, and training data adds a column for log odds.
 in iPython:
     import lclib
     run lclib.create_clean_title_log_odds_json()
     run lclib.create_capitalization_log_odds_json()
 
-run build_random_forest.py
+Update the cache file for the training data by running lclib.cache_training_data() (DON'T DO THIS BEFORE YOU'VE UPDATED THE INPUT FILES ABOVE)
+#TO FIX: cache_training_data adds a column for clean_title_rank; we need to store the ranking dictionary so that it can be used in real-time by any model that if trained on these data.
+
+# build the models; make sure the features match what we previously in prod (check the random_forest_model.py file):
+# modify the cv_end date to 2 months after the oos_cutoff
+run production_build.py
+
+# this still overwrites the old pkl file in the main LCModel directory, rather than writing it to a specific model directory.  Need to modify the production_build.py file to build both models and save them in the prod subdirectory together.  Also need to write code to copy all other files to prod subdirectory
+run build_prepayment_rf.py
+#TO FIX: add the default curves, prepayment curves and clean_title_rank dictionary to the model directory, when the model is fit.
+
+
+
+## HOW THIS SHOULD WORK
+1. Code to take the raw data files, assemble them into an array, and add the non-out-of-sample features (urates, etc, but not log odds).
+2. Code to process the data into training and test sets (both loan data and payments data, using the same loan ids for the training/test split for both)
+2. Code to generate in-sample features from the training set (log odds, title ranks, etc).
+3. Code to fit both the default and prepayment models on the training data.
+4. Code to evaluation test set results.
+5. Code to refit everything on the full dataset and save all relevant files to a production directory.

@@ -1,11 +1,8 @@
-from lendingclub import LendingClub, LendingClubError
-from lendingclub.filters import SavedFilter
 from datetime import datetime as dt, timedelta as td
 from time import sleep
 import numpy as np
 import pandas as pd
 import os
-import random_forest_model as rfm
 import lclib
 import json
 import requests
@@ -49,7 +46,7 @@ def get_seasoned_loans(loans):
 
 
 def get_late_loans(loans):
-    late = [l for l in loans if l['loanStatus'].startswith('Late')]
+    late = [l for l in loans if l['loanStatus'].startswith('Late (31')]
     for l in late:
         if l['lastPaymentDate']:
             start = parse_date(l['lastPaymentDate'])
