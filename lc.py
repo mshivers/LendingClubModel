@@ -262,7 +262,8 @@ def main(min_irr=11, max_invest=500):
         print '\n{}: Checking for new loans'.format(dt.now())
         last_search_loans = get_new_loans_REST()
         known_loans, new_ids = add_to_known_loans(known_loans, last_search_loans) 
-        for id in new_ids: rfm.parse_REST_loan_details(known_loans[id])
+        for id in new_ids: 
+            rfm.parse_REST_loan_details(known_loans[id])
         recent_loan_amounts = [l['loanAmount'] for l in known_loans.values() 
                                if l['search_time']>dt.now()-td(minutes=60)]
         num_new_loans = len(recent_loan_amounts)

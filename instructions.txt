@@ -1,10 +1,6 @@
 download updated LendingClub data (log in first to get the full dataset)
 
-Update employment data:
-    run get_bls_data.py
-    run bls_by_3zip.by
- 
-run construct_datasets.py to update house-price data
+run get_external_data.py to grab bls employment data and FHFA house-price data
 
 # Download most recent LendingClub data:
 1. download the most recent Payments History Files (All Payments version) at http://additionalstatistics.lendingclub.com/
@@ -44,9 +40,12 @@ run build_prepayment_rf.py
 
 
 ## HOW THIS SHOULD WORK
-1. Code to take the raw data files, assemble them into an array, and add the non-out-of-sample features (urates, etc, but not log odds).
+1. Code to take the raw data files, assemble them into an array, and add the pre-split, non-out-of-sample features (urates, etc, but not log odds).
 2. Code to process the data into training and test sets (both loan data and payments data, using the same loan ids for the training/test split for both)
-2. Code to generate in-sample features from the training set (log odds, title ranks, etc).
+2. Code to generate in-sample features from the training set (log odds, title ranks, etc) and save the generating functions for prod use.
 3. Code to fit both the default and prepayment models on the training data.
-4. Code to evaluation test set results.
+4. Code to generate and evaluate the test set results.
 5. Code to refit everything on the full dataset and save all relevant files to a production directory.
+
+
+##IDEA FOR FEATURE:  add feature defined as max(token log odds for clean title token) - min(token log odds of clean title token) to try to flag titles that randomly share substrings with good titles.

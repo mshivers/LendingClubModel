@@ -6,11 +6,14 @@ import json
 import os
 import pandas as pd
 import numpy as np
+from lclib import parent_dir
 
-parent_dir = '/Users/marcshivers/LCModel'
 z2f = json.load(file(os.path.join(parent_dir, 'zip3_fips.json'),'r'))
+
+#z2f values are lists themselves; this flattens it
 all_fips = []
-[all_fips.extend(f) for f in z2f.values()]
+for f in z2f.values():
+    all_fips.extend(f)
 fips_str = ['0'*(5-len(str(f))) + str(f) for f in all_fips]
 
 data_code = dict()
@@ -44,4 +47,14 @@ unemployed = unemployed.pivot('yyyymm','fips','value')
 labor_force.to_csv(os.path.join(parent_dir, 'labor_force.csv'))
 unemployed.to_csv(os.path.join(parent_dir, 'unemployed.csv'))
 
+urates = dict()
+for z,fips in z2f.items():
+    ue = unemployed.ix[:,fips].sum(1)
+    lf = labor_force.ix[:,fips].sum(1)
+    ur = ue/lf
+    ur[lf==0]=np.nan
+    urates[z] = ur
 
+urate = pd.DataFrame(urates)
+urate.to_csv(os.path.join(parent_dir, 'urate_by_3zip.csv'))
+    

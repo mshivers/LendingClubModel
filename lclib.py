@@ -18,6 +18,11 @@ parent_dir = '/Users/marcshivers/LCModel'
 data_dir = os.path.join(parent_dir, 'data')
 loanstats_dir = os.path.join(parent_dir, 'data/loanstats')
 training_data_dir = os.path.join(parent_dir, 'data/training_data')
+reference_data_dir = os.path.join(parent_dir, 'data/reference_data')
+bls_data_dir = os.path.join(parent_dir, 'data/bls_data')
+fhfa_data_dir = os.path.join(parent_dir, 'data/fhfa_data')
+saved_prod_data_dir = os.path.join(parent_dir, 'data/saved_prod_data')
+
 cached_training_data_fname = 'cached_training_data.csv'
 
 update_hrs = [1,5,9,13,17,21]
@@ -195,20 +200,20 @@ def cache_training_data():
 
 
     ### Add non-LC features
-    urate = pd.read_csv(os.path.join(parent_dir, 'urate_by_3zip.csv'), index_col=0)
+    urate = pd.read_csv(os.path.join(bls_data_dir, 'urate_by_3zip.csv'), index_col=0)
     ur = pd.DataFrame(np.zeros((len(urate),999))*np.nan,index=urate.index, columns=[str(i) for i in range(1,1000)])
     ur.ix[:,:] = urate.median(1).values[:,None]
     ur.ix[:,urate.columns] = urate
     avg_ur = pd.rolling_mean(ur, 12)
     ur_chg = ur - ur.shift(12)
     
-    hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
+    hpa4 = pd.read_csv(os.path.join(fhfa_data_dir, 'hpa4.csv'), index_col = 0)
     mean_hpa4 = hpa4.mean(1)
     missing_cols = [str(col) for col in range(0,1000) if str(col) not in hpa4.columns]
     for c in missing_cols:
         hpa4[c] = mean_hpa4
 
-    z2mi = json.load(open(os.path.join(parent_dir, 'zip2median_inc.json'),'r'))
+    z2mi = json.load(open(os.path.join(reference_data_dir, 'zip2median_inc.json'),'r'))
     z2mi = dict([(int(z), float(v)) for z,v in zip(z2mi.keys(), z2mi.values())])
     z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
 
@@ -251,7 +256,7 @@ def cache_training_data():
 
     df['hpa_date'] = df['issue_d'].apply(lambda x:x-td(days=120))
     df['hpa_qtr'] = df['hpa_date'].apply(lambda x: 100*x.year + x.month/4 + 1)
-    hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
+    hpa4 = pd.read_csv(os.path.join(fhfa_data_dir, 'hpa4.csv'), index_col = 0)
     missing_cols = [str(col) for col in range(0,1000) if str(col) not in hpa4.columns]
     mean_hpa4 = hpa4.mean(1)
     for c in missing_cols:
@@ -710,7 +715,7 @@ def email_details(acct, loans, info):
 
 def load_census_data():
     # loads the census bureaus low-income area data
-    fname = os.path.join(data_dir, 'lya2014.txt')
+    fname = os.path.join(reference_data_dir, 'lya2014.txt')
     rows = open(fname,'r').read().split('\r\n')
     data = [r.split() for r in rows]
     df = pd.DataFrame(data[1:], columns=data[0])
@@ -727,9 +732,9 @@ def load_nonmetro_housing():
     link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
     try:
         data = pd.read_excel(link, skiprows=2)
-        data.to_csv(os.path.join(data_dir, 'HPI_AT_nonmetro.csv'))
+        data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_nonmetro.csv'))
     except:
-        data = pd.read_csv(os.path.join(data_dir,'HPI_AT_nonmetro.csv'))
+        data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_nonmetro.csv'))
         print '{}: Failed to load FHFA nonmetro data; using cache\n'.format(dt.now())
 
     grp = data.groupby('State')
@@ -748,9 +753,9 @@ def load_metro_housing():
     cols = ['Location','CBSA', 'yr','qtr','index', 'stdev']
     try:
         data = pd.read_csv(link, header=None, names=cols)
-        data.to_csv(os.path.join(data_dir, 'HPI_AT_metro.csv'))
+        data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_metro.csv'))
     except:
-        data = pd.read_csv(os.path.join(data_dir,'HPI_AT_metro.csv'), skiprows=1, header=None, names=cols)
+        data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_metro.csv'), skiprows=1, header=None, names=cols)
         print '{}: Failed to load FHFA metro data; using cache\n'.format(dt.now())
     data = data[data['index']!='-']
     data['index'] = data['index'].astype(float)
@@ -769,7 +774,7 @@ def load_bls():
 
     z2f = load_z2f()
 
-    bls_fname = os.path.join(data_dir, 'bls_summary.csv')
+    bls_fname = os.path.join(bls_data_dir, 'bls_summary.csv')
     if os.path.exists(bls_fname):
         update_dt = dt.fromtimestamp(os.path.getmtime(bls_fname))
         days_old = (dt.now() - update_dt).days 
@@ -828,7 +833,7 @@ def load_bls():
 
 def load_z2c():
     ''' Core crosswalk file from www.huduser.org/portal/datasets/usps_crosswalk.htlm'''
-    data = pd.read_csv(os.path.join(data_dir, 'z2c.csv'))
+    data = pd.read_csv(os.path.join(reference_data_dir, 'z2c.csv'))
     data['3zip'] = (data['ZIP']/100).astype(int)
     data['CBSA'] = data['CBSA'].astype(int)
     data = data[data['CBSA']!=99999]
@@ -842,39 +847,39 @@ def load_z2c():
 def load_z2loc():
     ''' loads a dictionary mapping the first 3 digits of the zip code to a 
     list of location names''' 
-    data = json.load(open(os.path.join(parent_dir, 'zip2location.json'), 'r'))
+    data = json.load(open(os.path.join(reference_data_dir, 'zip2location.json'), 'r'))
     return dict([int(k), locs] for k, locs in data.items())
 
 
 def load_z2primarycity():
     ''' loads a dictionary mapping the first 3 digits of the zip code to the
     most common city with that zip code prefix'''
-    data = json.load(open(os.path.join(parent_dir,'zip2primarycity.json')))
+    data = json.load(open(os.path.join(reference_data_dir,'zip2primarycity.json')))
     return dict([int(k), locs] for k, locs in data.items())
 
 
 def load_z2f():
     ''' loads a dictionary mapping the first 3 digits of the zip code to a 
     list of FIPS codes'''
-    d = json.load(open(os.path.join(parent_dir, 'z2f.json'), 'r'))
+    d = json.load(open(os.path.join(reference_data_dir, 'z2f.json'), 'r'))
     return dict([int(k), [int(v) for v in vals]] for k, vals in d.items())
 
 
 def load_f2c():
     ''' loads a dictionary mapping FIPS codes to CBSA codes and names '''
     #need a mapping that lists NY-NJ to 35614, rather than 36544
-    d = json.load(open(os.path.join(parent_dir, 'fips2cbsa.json'), 'r'))
+    d = json.load(open(os.path.join(reference_data_dir, 'fips2cbsa.json'), 'r'))
     return dict([int(k), [int(v[0]), v[1]]] for k, v in d.items())
 
 
 def save_loan_info(loans):
-    f = open(os.path.join(data_dir, 'employer_data.csv'),'a')
+    f = open(os.path.join(saved_prod_data_dir, 'employer_data.csv'),'a')
     for l in loans:
         f.write('{}|{}|{}\n'.format(l['id'], l['currentJobTitle'],l['currentCompany']))
         l['details_saved']=True
     f.close()
 
-    f = open(os.path.join(data_dir, 'all_api_data.csv'),'a')
+    f = open(os.path.join(saved_prod_data_dir, 'all_api_data.csv'),'a')
     for l in loans:
         save_str = '|'.join(['{}|{}'.format(k,v) for k,v in sorted(l.items())])
         f.write(save_str + '\n')
