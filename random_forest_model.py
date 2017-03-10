@@ -17,7 +17,7 @@ default_model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')
 default_model = joblib.load(default_model_file) 
 default_model.verbose=0
 
-prepayment_model_file = os.path.join(lclib.parent_dir, 'prepayment_risk_model.pkl')
+prepayment_model_file = os.path.join(model_path, 'prepayment_risk_model.pkl')
 prepayment_model = joblib.load(prepayment_model_file) 
 prepayment_model.verbose=0
 
@@ -35,7 +35,7 @@ tok4_clean_title_dict =json.load(open(os.path.join(model_path, 'prod_tok4_clean_
 tok4_clean_title_dict = defaultdict(lambda :0, tok4_clean_title_dict)
 clean_title_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), tok4_clean_title_dict, 4)
 
-pctlo_dict = json.load(open(os.path.join(lclib.parent_dir, 'pctlo.json'),'r'))
+pctlo_dict = json.load(open(os.path.join(model_path, 'pctlo.json'),'r'))
 pctlo_dict = defaultdict(lambda :0, pctlo_dict)
 pctlo_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), pctlo_dict, 4)
 

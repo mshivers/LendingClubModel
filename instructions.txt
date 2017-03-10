@@ -48,4 +48,6 @@ run build_prepayment_rf.py
 5. Code to refit everything on the full dataset and save all relevant files to a production directory.
 
 
-##IDEA FOR FEATURE:  add feature defined as max(token log odds for clean title token) - min(token log odds of clean title token) to try to flag titles that randomly share substrings with good titles.
+##IDEA FOR FEATURE:  add feature defined as max(token log odds for clean title token) - min(token log odds of clean title token) to try to flag titles that randomly share substrings with good titles.  Also feature for max log odds for full word in title.
+
+Store the key and id for both accounts in a non-git file, and read that in portfolio_analysis.py::get_notes()

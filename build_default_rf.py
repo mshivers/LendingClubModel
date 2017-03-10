@@ -97,9 +97,12 @@ extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate']
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
 
+finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<inf
+fit_data = fit_data.ix[finite]
+
 oos_cutoff = str(oos_cutoff)
 cv_begin = oos_cutoff
-cv_end = str(dt(2015,6,1))
+cv_end = str(dt(2016,3,1))
 print 'OOS Cutoff: {}'.format(oos_cutoff)
 
 fit_data = fit_data.sort('issue_d')
@@ -116,22 +119,38 @@ forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_lea
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
 pf = forest.predict(x_test)
-mult = 1.14 * (test_term==36) + 1.72 * (test_term==60)
-exp_loss = pf * mult
-alpha = test_int_rate - 100*exp_loss
-
 
 test_data = fit_data.loc[oos] 
-irr = np.zeros(len(y_test))
-for row_num, row_pair in enumerate(test_data.iterrows()):
-    row = row_pair[1]
-    grade = 'ABCDE'[min(4, row.grade)]
-    loan =  construct_loan_dict(grade, row.term, row.int_rate, row.loan_amnt)
-    loan['default_risk'] = 100*pf[row_num]
-    calc_npv(loan)
-    irr[row_num] = loan['irr']
+test_data['default_prob'] = pf
+grp = test_data.groupby(['sub_grade', 'term'])
+for k in sorted(grp.groups.keys()):
+    sample = grp.get_group(k)
+    grp_predict = sample.default_prob
+    pctl10, grp_median, pctl90 = np.percentile(sample['default_prob'].values, [10,50,90])
+    low = grp_predict<grp_median
+    high = grp_predict>=grp_median
+    low_prob_mean = 100*sample.ix[low, iv].mean()
+    high_prob_mean = 100*sample.ix[high, iv].mean() 
+    rate_diff = sample.ix[low, 'int_rate'].mean() - sample.ix[high, 'int_rate'].mean()
+    print k,
+    print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(low_prob_mean
+            , high_prob_mean, high_prob_mean - low_prob_mean, rate_diff)
 
-roe = test_int_rate - 100*y_test*mult
+grp = test_data.groupby(['grade', 'term'])
+for k in sorted(grp.groups.keys()):
+    sample = grp.get_group(k)
+    grp_predict = sample.default_prob
+    pctl10, grp_median, pctl90 = np.percentile(sample['default_prob'].values, [10,50,90])
+    bottom = grp_predict<=pctl10
+    top = grp_predict>=pctl90
+    bottom_prob_mean = 100*sample.ix[bottom, iv].mean()
+    top_prob_mean = 100*sample.ix[top, iv].mean() 
+    rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
+    print k,
+    print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(bottom_prob_mean
+            , top_prob_mean, top_prob_mean - bottom_prob_mean, rate_diff)
+   
+
 
 titlestr = '{:>8s}'*7 + '\n'
 printstr = '{:>8.2f}'*6 + '{:>8.0f}\n'

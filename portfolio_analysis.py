@@ -7,12 +7,24 @@ import lclib
 import json
 import requests
 
-taxable_id = 21187915
-taxable_key = 'k1ERom59eg9I39i6ERdotagIlQo='
-ira_id = 27097986
-ira_key = 'wBQitzG0rab9WPReJItUBc0wMOo='
 
-def get_notes(id, key):
+def get_notes(account='ira'):
+    
+    if account == 'all':
+        return get_notes('ira') + get_notes('tax')
+
+    taxable_id = 21187915
+    taxable_key = 'k1ERom59eg9I39i6ERdotagIlQo='
+    ira_id = 27097986
+    ira_key = 'wBQitzG0rab9WPReJItUBc0wMOo='
+
+    if account == 'ira':
+        id = ira_id
+        key = ira_key
+    else:
+        id = taxable_id
+        key = taxable_key
+
     notes = []
     url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/detailednotes'.format(id)
     result = requests.get(url, headers={'Authorization': key})
@@ -21,10 +33,6 @@ def get_notes(id, key):
         if 'myNotes' in result_js.keys():
             notes = result.json()['myNotes']
     return notes
-
-#inotes = get_notes(ira_id, ira_key)
-#tnotes = get_notes(taxable_id, taxable_key)
-
 
 
 def parse_date(dtstr):
@@ -151,8 +159,9 @@ def issue_months(notes):
     return sorted(list(set([n['issueDate'][:7] for n in notes if n['issueDate'] is not None])))
 
 
-def print_monthly_returns(notes):
+def calc_monthly_returns(notes):
     now = dt.now()
+    out = list()
     for m in issue_months(notes):
         yr, mth = m.split('-')
         issue_dt = dt(int(yr), int(mth), 15)
@@ -167,11 +176,15 @@ def print_monthly_returns(notes):
 
         invest_days = (now - issue_dt).days
         invest_years = 1.0 * invest_days / 365
-        total_return = (1.0*i - d) / avg_balance 
+        total_return = (1.0*i - e) / avg_balance 
         annual_return = ((1 + total_return) ** (1/invest_years)) - 1
-        print m, issue_dt, invest_years, total_return, annual_return, p,c, i, d, e
+        #print m, issue_dt, invest_years, total_return, annual_return, p,c, i, d, e
+        out.append([ m, issue_dt, invest_years, total_return, annual_return, p,c, i, d, e])
         #print '{}: {}, {}, {}, {}'.format(m, annual_return, p, i, d)
- 
+    col_names = ['month', 'issue_dt', 'age', 'total_exp_return', 'annual_exp_return', 'total_invested', 
+            'current_balance', 'total_interest', 'total_defaulted', 'expected_defaults']
+    return pd.DataFrame(out, columns=col_names).set_index('month')
+
 def initial_returns(notes, num_months):
     now = dt.now()
     out = list()
@@ -191,20 +204,15 @@ def initial_returns(notes, num_months):
         invest_years = 1.0 * invest_days / 365
         total_return = (1.0*i - d) / avg_balance 
         annual_return = ((1 + total_return) ** (1/invest_years)) - 1
-        exp_writedown_pct = 'N/A'
-        writedown_pct = 'N/A'
-        exp_writedown_pct = 'N/A'
-        writedown_pct = 'N/A'
-        if i>0:
-            exp_writedown_pct = '{:1.3f}'.format(e/i)
-            writedown_pct = '{:1.3f}'.format(d/i)
         holding_mths = (now - issue_dt).days / (365.25/12)
+
         if num_months is not None:
             holding_mths = min(num_months, holding_mths)
         annualization = 12.0 / holding_mths
-        exp_ret = (1+ (i-e)/avg_balance)**(annualization)
-        act_ret = (1+ (i-d)/avg_balance)**(annualization)
-        print '{}\t{}\t{}\t{}\t{}\t{}\t{}'.format(m, p, int(i), int(d), int(e), act_ret, exp_ret)
-        out.append((m, p,c, int(i), int(d), int(e), writedown_pct, exp_writedown_pct))
-    cols = ['month', 'invested', 'outstanding', 'interest', 'defaults', 'exp_defaults', 'act_return', 'exp_return']
-    return pd.DataFrame(data=out, columns=cols) 
+        exp_ret = (1+ (i-e)/avg_balance)**(annualization) - 1
+        act_ret = (1+ (i-d)/avg_balance)**(annualization) - 1
+        out.append((m, holding_mths, p,c, int(i), int(d), int(e), act_ret, exp_ret))
+    cols = ['month', 'num_mths', 'invested', 'outstanding', 'interest', 'defaults', 
+            'exp_defaults', 'act_return', 'exp_return']
+    df = pd.DataFrame(data=out, columns=cols) 
+    return df 

@@ -50,6 +50,8 @@ extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'ter
 
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
+finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<inf
+fit_data = fit_data.ix[finite]
 
 oos_cutoff = str(oos_cutoff)
 cv_begin = oos_cutoff
