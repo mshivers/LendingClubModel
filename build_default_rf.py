@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 import os
 import json
 from lclib import parent_dir, load_training_data, calc_log_odds, tokenize_capitalization
-from lclib import oos_cutoff, construct_loan_dict, calc_npv
+from lclib import construct_loan_dict, calc_npv
 
 if 'df' not in locals().keys():
     df = load_training_data()
@@ -91,70 +91,74 @@ dv = ['loan_amnt',
 
 
 iv = '12m_wgt_default'
-extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate']
+extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
                 if tmp not in dv]
 
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
 
-finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<inf
+finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<np.inf
 fit_data = fit_data.ix[finite]
 
-oos_cutoff = str(oos_cutoff)
-cv_begin = oos_cutoff
-cv_end = str(dt(2016,3,1))
-print 'OOS Cutoff: {}'.format(oos_cutoff)
-
 fit_data = fit_data.sort('issue_d')
-isdx = fit_data['issue_d'] < oos_cutoff 
-x_train = fit_data.loc[isdx,:][dv].values
-y_train = fit_data.loc[isdx,:][iv].values
-oos = (fit_data['issue_d']>= cv_begin) & (fit_data['issue_d']< cv_end) 
-y_test = fit_data.loc[oos,:][iv].values
-x_test = fit_data.loc[oos,:][dv].values
-test_int_rate = fit_data.loc[oos]['int_rate'].values
-test_term = fit_data.loc[oos]['term'].values
+x_train = fit_data.ix[fit_data.in_sample,:][dv].values
+y_train = fit_data.ix[fit_data.in_sample,:][iv].values
+y_test = fit_data.ix[~fit_data.in_sample,:][iv].values
+x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
+test_int_rate = fit_data.ix[~fit_data.in_sample, 'int_rate'].values
+test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 
 forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
 pf = forest.predict(x_test)
+predictions = [tree.predict(x_test) for tree in forest.estimators_]
+predictions = np.vstack(predictions).T  #loans X trees
 
-test_data = fit_data.loc[oos] 
+test_data = fit_data.ix[~fit_data.in_sample] 
 test_data['default_prob'] = pf
+pctls = range(10, 91, 10)
+for pct in pctls:
+    test_data['default_prob_{}'.format(pct)] = np.percentile(predictions, pct, axis=1)
+  
 grp = test_data.groupby(['sub_grade', 'term'])
-for k in sorted(grp.groups.keys()):
-    sample = grp.get_group(k)
-    grp_predict = sample.default_prob
-    pctl10, grp_median, pctl90 = np.percentile(sample['default_prob'].values, [10,50,90])
-    low = grp_predict<grp_median
-    high = grp_predict>=grp_median
-    low_prob_mean = 100*sample.ix[low, iv].mean()
-    high_prob_mean = 100*sample.ix[high, iv].mean() 
-    rate_diff = sample.ix[low, 'int_rate'].mean() - sample.ix[high, 'int_rate'].mean()
-    print k,
-    print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(low_prob_mean
-            , high_prob_mean, high_prob_mean - low_prob_mean, rate_diff)
+for pct in pctls:
+    print '\n\n', pct
+    for k in sorted(grp.groups.keys()):
+        sample = grp.get_group(k)
+        grp_predict = sample.default_prob
+        pctl10, grp_median, pctl90 = np.percentile(sample['default_prob_{}'.format(pct)].values, [10,50,90])
+        low = grp_predict<grp_median
+        high = grp_predict>=grp_median
+        low_prob_mean = 100*sample.ix[low, iv].mean()
+        high_prob_mean = 100*sample.ix[high, iv].mean() 
+        rate_diff = sample.ix[low, 'int_rate'].mean() - sample.ix[high, 'int_rate'].mean()
+        print k,
+        print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(low_prob_mean
+                , high_prob_mean, high_prob_mean - low_prob_mean, rate_diff)
 
 grp = test_data.groupby(['grade', 'term'])
-for k in sorted(grp.groups.keys()):
-    sample = grp.get_group(k)
-    grp_predict = sample.default_prob
-    pctl10, grp_median, pctl90 = np.percentile(sample['default_prob'].values, [10,50,90])
-    bottom = grp_predict<=pctl10
-    top = grp_predict>=pctl90
-    bottom_prob_mean = 100*sample.ix[bottom, iv].mean()
-    top_prob_mean = 100*sample.ix[top, iv].mean() 
-    rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
-    print k,
-    print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(bottom_prob_mean
-            , top_prob_mean, top_prob_mean - bottom_prob_mean, rate_diff)
-   
+for pct in pctls:
+    default_fld = 'default_prob_{}'.format(pct)
+    print '\n\n', pct
+    for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
+        sample = grp.get_group(k)
+        grp_predict = sample[default_fld]
+        pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
+        bottom = grp_predict<=pctl10
+        top = grp_predict>=pctl90
+        bottom_prob_mean = 100*sample.ix[bottom, iv].mean()
+        top_prob_mean = 100*sample.ix[top, iv].mean() 
+        rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
+        print k,
+        print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(bottom_prob_mean
+                , top_prob_mean, top_prob_mean - bottom_prob_mean, rate_diff)
+       
 
 
 titlestr = '{:>8s}'*7 + '\n'
 printstr = '{:>8.2f}'*6 + '{:>8.0f}\n'
-data_str = 'OOS Cutoff = {}'.format(str(oos_cutoff))
+data_str = ''
 int_ranges = [[0,7],[7,10],[10,12],[12,13.5],[13.5,15],[15,17],[17,20],[20,30]]
 for int_range in int_ranges:
     data_str += '\nInt Range: [{},{}]\n'.format(*int_range)

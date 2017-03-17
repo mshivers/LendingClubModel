@@ -1,7 +1,23 @@
 #Notes:
 #    1. use 'Blank' instead of 'blank' so it doesn't get lumped in with lower case feature
 
+all_grades = list('ABCDEFG')
 
+out = list()
+selected_notes = inotes #[n for n in inotes if n['issueDate'] is not None and not n['issueDate'][:4]=='2015']
+for term in [36,60]:
+    for grade in all_grades:
+        grade_notes = [n for n in selected_notes if n['grade'].startswith(grade) and n['loanLength']==term]
+        if len(grade_notes)>10:
+            tmp = pa.calc_monthly_returns(grade_notes)
+            cash = (tmp.total_interest - tmp.expected_defaults).sum()
+            invested = 0.5*(tmp.total_invested + tmp.current_balance).sum()
+            current = tmp.current_balance.sum()
+            avg_age = (tmp.total_invested * tmp.age).sum() / tmp.total_invested.sum()
+            out.append([ grade, term,avg_age, cash, invested,current, (1 + cash/invested)**(1 / avg_age)])
+out = pd.DataFrame(out, columns=['grade', 'term', 'avg_age', 'cash', 'invested','current', 'return'])
+print out
+'''
 # downloads the monthly non-seasonally adjusted employment data, and saves csv files for
 # monthly labor force size, and number of unemployed by fips county code, to use to construct
 # historical employment statistics by zip code for model fitting
@@ -35,7 +51,6 @@ for i, l in enumerate(ira):
                             ids.add(l['loanId'])
 
                         print l, '\n\n\n'
-'''
 
 all_grades = list('ABCDEFG')
 curves = prepay_curves
@@ -52,7 +67,6 @@ for term in [36,60]:
     plt.grid()
     plt.show()
 
-'''
 def make_loan(grade, term, rate, amount):
     pmt = np.pmt(rate/1200., term, amount)
     loan = dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
@@ -63,7 +77,6 @@ def make_loan(grade, term, rate, amount):
 
 
 
-'''
 hpa4 = pd.read_csv(os.path.join(parent_dir, 'hpa4.csv'), index_col = 0)
 
 

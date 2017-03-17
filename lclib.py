@@ -8,7 +8,8 @@ import numpy as np
 from datetime import datetime as dt
 from datetime import timedelta as td
 from collections import defaultdict, Counter
-
+import scipy.signal
+from matplotlib import pyplot as plt
 
 LARGE_INT = 9999 
 NEGATIVE_ONE = -1 
@@ -23,7 +24,8 @@ bls_data_dir = os.path.join(parent_dir, 'data/bls_data')
 fhfa_data_dir = os.path.join(parent_dir, 'data/fhfa_data')
 saved_prod_data_dir = os.path.join(parent_dir, 'data/saved_prod_data')
 
-cached_training_data_fname = 'cached_training_data.csv'
+payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170215.csv')
+cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
 
 update_hrs = [1,5,9,13,17,21]
 
@@ -96,12 +98,11 @@ def clean_title(x):
 
 def load_training_data(regen=False):
 
-    fname = os.path.join(training_data_dir, cached_training_data_fname)
-    if os.path.exists(fname) and not regen:
-        update_dt = dt.fromtimestamp(os.path.getmtime(fname))
+    if os.path.exists(cached_training_data_file) and not regen:
+        update_dt = dt.fromtimestamp(os.path.getmtime(cached_training_data_file))
         days_old = (dt.now() - update_dt).days 
         print 'Using cached LC data created on {}; cache is {} days old'.format(update_dt, days_old)
-        df = pd.read_csv(fname)
+        df = pd.read_csv(cached_training_data_file)
     else:
         print 'Cache not found. Generating cache from source data'
         cache_training_data()
@@ -132,7 +133,11 @@ def cache_training_data():
     # use only data after emp_title switched from company name
     df['issue_d'] = df['issue_d'].apply(lambda x: dt.strptime(x, '%b-%Y'))
     idx3 = df['issue_d']>=np.datetime64('2013-10-01')
-    df = df.ix[idx3].copy()
+
+    # only use data for loans that were originated at least 1 year ago
+    idx4 = df['issue_d'] <= dt.now() - td(days=366)
+    
+    df = df.ix[idx3&idx4].copy()
 
     df['id'] = df['id'].astype(int)
 
@@ -198,6 +203,8 @@ def cache_training_data():
     df['mths_since_last_major_derog'].fillna(LARGE_INT)
     df['mths_since_last_record'].fillna(LARGE_INT)
 
+    # tag data for in-sample and oos (in sample issued at least 14 months ago. Issued 12-13 months ago is oos
+    df['in_sample'] = df['issue_d'] < dt.now() - td(days=14*31)
 
     ### Add non-LC features
     urate = pd.read_csv(os.path.join(bls_data_dir, 'urate_by_3zip.csv'), index_col=0)
@@ -217,22 +224,6 @@ def cache_training_data():
     z2mi = dict([(int(z), float(v)) for z,v in zip(z2mi.keys(), z2mi.values())])
     z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
 
-    # separate out employer name (before 9/23/2013) from employment title (after that)
-    def return_word(x, position=0):
-        if len(x)==0:
-            return ''
-        else:
-            return x.split()[position]
-    df['title_capitalization'] = df['emp_title'].apply(tokenize_capitalization)
-
-    clean_title_count = Counter(df['clean_title'].values)
-    clean_titles_sorted = [ttl[0] for ttl in sorted(clean_title_count.items(), key=lambda x:-x[1])]
-    clean_title_rank_map = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
-    json.dump(clean_title_rank_map, open(os.path.join(training_data_dir, 'clean_title_rank_map.json'),'w'))
-
-    # process job title features
-    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_rank_map[x])
-  
     one_year = 365*24*60*60*1e9
     df['credit_length'] = ((df['issue_d'] - df['earliest_cr_line']).astype(int)/one_year)
     df['credit_length'] = df['credit_length'].apply(lambda x: max(-1,round(x,0)))
@@ -266,30 +257,42 @@ def cache_training_data():
     df['pymt_pct_inc'] = df['installment'] / df['annual_inc'] 
     df['revol_bal_pct_inc'] = df['revol_bal'] / df['annual_inc']
     df['int_pct_inc'] = df['int_pymt'] / df['annual_inc'] 
-
-    # This is estimated using only loans of grede C or lower
-    df['title_capitalization'] = df['emp_title'].apply(tokenize_capitalization)
-    ctloC_dict = json.load(open(os.path.join(parent_dir, 'ctloC.json'),'r'))
-    ctloC = defaultdict(lambda :0, ctloC_dict)
-    odds_map = lambda x: calc_log_odds('^{}$'.format(x), ctloC, 4)
-    df['ctloC'] = df['clean_title'].apply(odds_map)
-
-    caploC = json.load(open(os.path.join(parent_dir, 'caploC.json'),'r'))
-    caploC = defaultdict(lambda :0, caploC)
-    odds_map = lambda x: calc_log_odds(x, caploC, 4) #Note title_capitalization already is in '^{}$' format
-    df['caploC'] = df['title_capitalization'].apply(odds_map)
-
-    pctlo_dict = json.load(open(os.path.join(parent_dir, 'pctlo.json'),'r'))
-    pctlo = defaultdict(lambda :0, pctlo_dict)
-    odds_map = lambda x: calc_log_odds('^{}$'.format(x), pctlo, 4)
-    df['pctlo'] = df['clean_title'].apply(odds_map)
-
     df['cur_bal-loan_amnt'] = df['tot_cur_bal'] - df['loan_amnt'] 
     df['cur_bal_pct_loan_amnt'] = df['tot_cur_bal'] / df['loan_amnt'] 
     df['loan_pct_income'] = df['loan_amnt'] / df['annual_inc']
 
-    save_to = os.path.join(training_data_dir, cached_training_data_fname)
-    df.to_csv(save_to)
+    df['title_capitalization'] = df['emp_title'].apply(tokenize_capitalization)
+
+    # add title rank feature 
+    clean_title_count = Counter(df.ix[df.in_sample, 'clean_title'].values)
+    clean_titles_sorted = [ttl[0] for ttl in sorted(clean_title_count.items(), key=lambda x:-x[1])]
+    clean_title_rank_dict = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
+    json.dump(clean_title_rank_dict, open(os.path.join(training_data_dir, 'clean_title_rank_map.json'),'w'))
+    clean_title_rank_map = defaultdict(lambda :1e9, clean_title_rank_dict)
+    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_rank_map[x])
+
+    # process job title features
+    sample = (df.grade>=2) & (df.in_sample)
+    ctloC_dict = fast_create_log_odds(df.ix[sample], string_fld='clean_title')
+    json.dump(ctloC_dict, open(os.path.join(training_data_dir, 'ctloC.json'),'w'))
+    ctloC = defaultdict(lambda :0, ctloC_dict)
+    odds_map = lambda x: calc_log_odds('^{}$'.format(x), ctloC, 4)
+    df['ctloC'] = df['clean_title'].apply(odds_map)
+
+    caploC_dict = fast_create_log_odds(df.ix[sample], string_fld='title_capitalization')
+    json.dump(caploC_dict, open(os.path.join(training_data_dir, 'caploC.json'),'w'))
+    caploC = defaultdict(lambda :0, caploC_dict)
+    odds_map = lambda x: calc_log_odds(x, caploC, 4) #Note title_capitalization already is in '^{}$' format
+    df['caploC'] = df['title_capitalization'].apply(odds_map)
+
+    sample = (df.in_sample)
+    pctlo_dict = fast_create_log_odds(df.ix[sample], string_fld='clean_title', numeric_fld='12m_prepay')
+    json.dump(pctlo_dict, open(os.path.join(training_data_dir, 'pctlo.json'),'w'))
+    pctlo = defaultdict(lambda :0, pctlo_dict)
+    odds_map = lambda x: calc_log_odds('^{}$'.format(x), pctlo, 4)
+    df['pctlo'] = df['clean_title'].apply(odds_map)
+
+    df.to_csv(cached_training_data_file)
 
 
 def only_ascii(s):
@@ -415,8 +418,30 @@ def create_clean_title_log_odds_json(df=None, fname='ctloC.json', tok_len=4, fld
         print '\n'
         odds_map[tok] = log_odds
 
-        json.dump(odds_map, open(os.path.join(parent_dir, fname),'w'))
     return odds_map
+
+def get_tokens(tok_str, tok_len=4):
+    title = '^{}$'.format(tok_str) #add string boundary tokens
+    toks = set([title[i:i+tok_len] for i in range(max(1,len(title)-tok_len+1))])
+    return toks
+
+def fast_create_log_odds(df, string_fld='clean_title', numeric_fld='12m_wgt_default'):
+    fld_sum = defaultdict(lambda :0)
+    fld_count = defaultdict(lambda :0)
+    g = df[[string_fld, numeric_fld]].groupby(string_fld)
+    data = g.agg(['sum', 'count'])[numeric_fld]
+    numeric_mean = df[numeric_fld].mean() 
+    for title, row in data.iterrows():
+        tokens = get_tokens(title)
+        for tok in tokens:
+            fld_sum[tok] += row['sum']
+            fld_count[tok] += row['count']
+    
+    C = 2000.0
+    logodds = (pd.Series(fld_sum) + C * numeric_mean) / (pd.Series(fld_count) + C)
+    logodds = np.log(logodds) - np.log(numeric_mean)
+    return logodds.to_dict() 
+
 
 
 def create_capitalization_log_odds_json(df=None, fname='caploC.json', tok_len=4, fld_name='emp_title'):
@@ -453,7 +478,7 @@ def create_capitalization_log_odds_json(df=None, fname='caploC.json', tok_len=4,
         print '\n'
         odds_map[tok] = log_odds
 
-        json.dump(odds_map, open(os.path.join(parent_dir, fname),'w'))
+        json.dump(odds_map, open(os.path.join(training_data_dir, fname),'w'))
     return odds_map
 
 
@@ -485,7 +510,7 @@ def create_emp_name_log_odds_json(df, fname, tok_len=4, fld_name='emp_title'):
         print '\n'
         odds_map[tok] = log_odds
 
-        json.dump(odds_map, open(os.path.join(parent_dir, fname),'w'))
+        json.dump(odds_map, open(os.path.join(training_data_dir, fname),'w'))
     return odds_map
 
 
@@ -521,7 +546,7 @@ def create_clean_title_dataset(df, fname, tok_len=4, fld_name='clean_title'):
         odds_map[tok] = (default_sum[True], default_count[True], default_count[False]) 
     df2 = pd.DataFrame(odds_map).T
     df2.columns = ['default_wgt_sum', 'default_count', 'current_count']
-    df2.to_csv(open(os.path.join(parent_dir, fname),'w'))
+    df2.to_csv(open(os.path.join(training_data_dir, fname),'w'))
     return df2 
 
 
@@ -975,9 +1000,6 @@ def add_external_features(l):
         l['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
 
 
-default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
-prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
-
 
 def construct_loan_dict(grade, term, rate, amount):
     pmt = np.pmt(rate/1200., term, amount)
@@ -986,7 +1008,9 @@ def construct_loan_dict(grade, term, rate, amount):
 
 
 
-
+ #TODO: pass default and prepayment curves in as arguments
+default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
+prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
 def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
     ''' All calculations assume a loan amount of $1.
     Note the default curves are the cumulative percent of loans that have defaulted prior 
@@ -1008,7 +1032,7 @@ def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
     # this is a hack; adjusting the entire curve seems obviously wrong.  E.g if we had a C default curve
     # that was graded D, adjusting the entire D curve down based on the 12-mth ratio would underestimate defaults
     cdefaults = np.r_[base_cdefaults[:1],np.diff(base_cdefaults)]
-    if risk_factor < 0:
+    if risk_factor < 1.0:
         cdefaults[:15] *= risk_factor
     else:
         cdefaults *= risk_factor
@@ -1096,10 +1120,417 @@ def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
     return annualized_irr, npv, annualized_irr_after_tax, npv_after_tax
     
 
+def estimate_default_curves():
+    now = dt.now
+    pd.set_option('display.max_colwidth', 200)
+    pd.set_option('display.width', 200)
+    pd.set_option('display.max_columns', 100)
+    t = now()
 
-    
+    cols = ['LOAN_ID', 'PBAL_BEG_PERIOD', 'PBAL_END_PERIOD', 'MONTHLYCONTRACTAMT', 'InterestRate', 
+            'VINTAGE', 'IssuedDate', 'RECEIVED_AMT', 'DUE_AMT', 'PERIOD_END_LSTAT', 'MOB', 'term', 'grade']
 
-class LC():
-    def __init__(self):
-        self.zip2feature = dict()
+    df = pd.read_csv(payments_file, sep=',', usecols=cols)
 
+    print 'After read_csv',  (now() - t).total_seconds()
+    df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
+    df['delinquent_amt'] = np.maximum(0, -(df['RECEIVED_AMT'] - df['DUE_AMT']))
+    df['mob_if_current'] = 0
+    idx = (df.PERIOD_END_LSTAT=='Current') | (df.PERIOD_END_LSTAT == 'Fully Paid')
+    df.ix[idx, 'mob_if_current'] = df.ix[idx, 'MOB']
+
+    g_id = df.groupby('LOAN_ID')
+    print 'After groupby by ID', (now() - t).total_seconds()
+    first = g_id.first()
+    last = g_id.last()
+
+    print 'After first/last', (now() - t).total_seconds()
+    data = first[['PBAL_BEG_PERIOD', 'InterestRate', 'MONTHLYCONTRACTAMT', 
+        'VINTAGE', 'IssuedDate', 'term', 'grade']].copy()
+    data['last_status'] = last['PERIOD_END_LSTAT']
+    data['last_balance'] = last['PBAL_END_PERIOD']
+    data['age'] = last['MOB']
+
+    data['last_current_mob'] = g_id['mob_if_current'].max()
+    data['max_prepayment'] = g_id['prepay_amt'].max()
+    data['max_delinquency'] = g_id['delinquent_amt'].max()
+
+    data = data.rename(columns=lambda x: x.lower())
+
+    default_status = ['Charged Off', 'Default', 'Late (31-120 days)']
+    g = data.groupby(['issueddate', 'term', 'grade'])
+
+    summary = dict()
+    for k in g.groups.keys():
+        v = g.get_group(k)
+        max_age = min(k[1], v['age'].max())
+        N = len(v)
+        default_mob = v.ix[v.last_status.isin(default_status), 'last_current_mob'].values
+        c = Counter(default_mob) 
+        default_counts = sorted(c.items(), key=lambda x:x[0])
+        summary[k] = (N, max_age, default_counts) 
+
+    defaults = np.zeros((len(summary), 63), dtype=np.int)
+    defaults[:,0] = [v[0] for v in summary.values()]
+    defaults[:,1] = [v[1] for v in summary.values()]
+    index = pd.MultiIndex.from_tuples(summary.keys(), names=['issue_month', 'term', 'grade'])
+
+    issued = defaults.copy()
+
+    for i, v in enumerate(summary.values()):
+        issued[i,2:3+v[1]] = v[0]
+        for months_paid, num in v[2]:
+           defaults[i, 2+min(v[1], months_paid)] = num
+        
+    cols = ['num_loans', 'max_age'] + range(61)
+    defaults = pd.DataFrame(data=defaults, index=index, columns=cols).reset_index()   
+    issued = pd.DataFrame(data=issued, index=index, columns=cols).reset_index()    
+
+    defaults['grade'] = np.minimum(defaults['grade'], 'G')
+    issued['grade'] = np.minimum(issued['grade'], 'G')
+
+    g_default = defaults.groupby(['term', 'grade']).sum()
+    g_issued = issued.groupby(['term', 'grade']).sum()
+    default_rates = (g_default / g_issued).ix[:, 0:]
+
+    default_curves = dict()
+    for i, r in default_rates.iterrows():
+        N = i[0]
+        win = 19 if N==36 else 29 
+        empirical_default = r[:N+1].values
+        smoothed_default = scipy.signal.savgol_filter(empirical_default, win , 3)
+        smoothed_default = np.maximum(0, smoothed_default) 
+        default_curves['{}{}'.format(i[1], i[0])] = list(np.cumsum(smoothed_default))
+        plt.figure()
+        plt.plot(empirical_default, 'b')
+        plt.plot(smoothed_default, 'r')
+        plt.title(i)
+        plt.grid()
+        plt.show()
+
+    all_grades = list('ABCDEFG')
+    for grade in all_grades:
+        plt.figure()
+        plt.plot(default_curves['{}60'.format(grade)], 'b')
+        plt.plot(default_curves['{}36'.format(grade)], 'r')
+        plt.title(grade)
+        plt.grid()
+        plt.show()
+
+    for term in [36,60]:
+        plt.figure()
+        for grade in all_grades:
+            plt.plot(default_curves['{}{}'.format(grade,term)])
+        plt.title('Term: {}'.format(term))
+        plt.grid()
+        plt.show()
+
+    default_curves_fname = os.path.join(training_data_dir, 'default_curves.json')
+    json.dump(default_curves, open(default_curves_fname, 'w'), indent=4)
+
+
+def estimate_prepayment_curves():
+    now = dt.now
+    pd.set_option('display.max_colwidth', 200)
+    pd.set_option('display.width', 200)
+    pd.set_option('display.max_columns', 100)
+    t = now()
+
+    cols = ['LOAN_ID', 'PBAL_BEG_PERIOD', 'PBAL_END_PERIOD', 'MONTHLYCONTRACTAMT', 'InterestRate', 
+            'VINTAGE', 'IssuedDate', 'RECEIVED_AMT', 'DUE_AMT', 'PERIOD_END_LSTAT', 'MOB', 'term', 'grade', 
+            'dti', 'HomeOwnership', 'MonthlyIncome', 'EmploymentLength']
+    df = pd.read_csv(payments_file, sep=',', usecols=cols)
+
+    print 'After read_csv',  (now() - t).total_seconds()
+    df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
+
+    g_id = df.groupby('LOAN_ID')
+    print 'After groupby by ID', (now() - t).total_seconds()
+
+    last = g_id.last()
+    first = g_id.first()
+    print 'After last()', (now() - t).total_seconds()
+
+        
+    df['bal_before_prepayment'] = df['PBAL_END_PERIOD'] + np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
+
+    # denominator is to deal with the corner case when the last payment month has a stub payment
+    df['prepay_pct'] = df['prepay_amt'] / np.maximum(df['DUE_AMT'], df['bal_before_prepayment'])
+    df['issue_year'] = df['IssuedDate'].apply(lambda x: int(x[-4:]))
+    prepays = df.pivot(index='LOAN_ID', columns='MOB', values='prepay_pct') 
+
+    # combine all payments for MOB=0 (a very small number of prepayments before the first payment is due) with MOB=1
+    prepays[1] = prepays[1] + prepays[0].fillna(0)
+    del prepays[0]
+
+    join_cols = ['term', 'grade', 'IssuedDate', 'MOB', 'dti', 'HomeOwnership', 'MonthlyIncome', 'EmploymentLength']
+    prepays = prepays.join(last[join_cols])
+
+    loan_amount = first['PBAL_BEG_PERIOD']
+    loan_amount.name = 'loan_amount'
+    prepays = prepays.join(loan_amount)
+
+    #combine E, F & G (there's not many of them)
+    prepays['grade'] = prepays['grade'].apply(lambda x: min(x, 'G'))
+
+    prepays = prepays.sort('IssuedDate')
+    for d in set(prepays['IssuedDate'].values):
+        idx = prepays.IssuedDate == d
+        max_mob = prepays.ix[idx, 'MOB'].max()
+        prepays.ix[idx, :(max_mob-1)] = prepays.ix[idx, :(max_mob-1)].fillna(0)
+        print d, max_mob
+        print prepays.ix[idx, :max_mob].sum(0)
+
+    g_prepays = prepays.groupby(['term', 'grade'])
+
+    prepays['low_dti'] = g_prepays['dti'].apply(lambda x: x<x.mean())
+    prepays['small_loan'] = g_prepays['loan_amount'].apply(lambda x: x<5000)
+
+    g2_prepays = prepays.groupby(['term', 'grade'])
+    mean_prepays = g2_prepays.mean()
+
+    all_grades = list('ABCDEFG')
+
+    '''
+    for t in [36,60]:
+        for g in all_grades:
+            plt.figure()
+            data = (mean_prepays.ix[(t,g,False)] - mean_prepays.ix[(t,g,True)])
+            data[:t].plot()
+            plt.title('{}, {}'.format(t,g))
+            plt.show()
+
+    for N in [36, 60]:
+        for g in all_grades:
+            plt.figure()
+            legend = list()
+            for i, r in mean_prepays.iterrows():
+                if i[0]==N and i[1]==g:
+                    legend.append(', '.join([str(k) for k in i]))
+                    plt.plot(r[:N])
+            plt.legend(legend, loc=2)
+            plt.title(N)
+            plt.grid()
+            plt.show()
+    '''
+
+    print 'After prepay pivot', (now() - t).total_seconds()
+    # we are using the empirical first-month prepayment (it's often much higher than 
+    # nearby months), then we'll smooth the later prepayment rates
+    prepay_curves = dict()
+    begin_smooth = 0
+    for N in [36, 60]:
+        for i, r in mean_prepays.iterrows():
+            if N == i[0]:
+                win = 7 if N==36 else 13 
+                empirical_prepays = r[:N].values
+                smoothed_prepays = scipy.signal.savgol_filter(empirical_prepays[begin_smooth:], win , 3)
+                smoothed_prepays = np.maximum(0, smoothed_prepays) 
+                smoothed_prepays = np.r_[empirical_prepays[:begin_smooth], smoothed_prepays]
+                prepay_curves['{}{}'.format(i[1], i[0])] = list(smoothed_prepays)
+               
+                plt.figure()
+                plt.plot(empirical_prepays, 'b')
+                plt.plot(smoothed_prepays, 'g')
+                plt.title(str(i))
+                plt.grid()
+                plt.show()
+
+    for term in [36,60]:
+        plt.figure()
+        for grade in all_grades:
+            plt.plot(prepay_curves['{}{}'.format(grade,term)])
+        plt.title('Term: {}'.format(term))
+        plt.legend(all_grades, loc=2)
+        plt.grid()
+        plt.show()
+
+    prepay_curves_fname = os.path.join(training_data_dir, 'prepay_curves.json')
+    json.dump(prepay_curves, open(prepay_curves_fname, 'w'), indent=4)
+
+
+def build_zip3_to_location_names():
+    import bls 
+    cw = pd.read_csv(os.path.join(reference_data_dir, 'CBSA_FIPS_MSA_crosswalk.csv'))
+    grp = cw.groupby('FIPS')
+    f2loc = dict([(k,list(df['CBSA Name'].values)) 
+                  for k in grp.groups.keys()
+                  for df in [grp.get_group(k)]])
+
+    z3f = json.load(open(os.path.join(reference_data_dir, 'zip3_fips.json'),'r'))
+    z2loc = dict()
+    for z,fips in z3f.items():
+        loc_set = set()
+        for f in fips:
+            if f in f2loc.keys():
+                loc_set.update([bls.convert_unicode(loc) for loc in f2loc[f]])
+        z2loc[int(z)] = sorted(list(loc_set))
+     
+    for z in range(1,1000):
+        if z not in z2loc.keys() or len(z2loc[z])==0:
+            z2loc[z] = ['No location info for {} zip'.format(z)]
+
+    json.dump(z2loc, open(os.path.join(reference_data_dir, 'zip2location.json'),'w'))
+
+def build_zip3_to_primary_city():
+    data= pd.read_csv(os.path.join(reference_data_dir, 'zip_code_database.csv'))
+    data['place'] = ['{}, {}'.format(c,s) for c,s in zip(data['primary_city'].values, data['state'].values)]
+
+    z2city = defaultdict(lambda :list())
+    for z,c in zip(data['zip'].values, data['place'].values):
+        z2city[int(z/100)].append(c)
+
+    z2primarycity = dict()
+    z2primary2 = dict()
+    for z,citylist in z2city.items():
+        z2primarycity[z] = Counter(citylist).most_common(1)[0][0]
+        z2primary2[z] = Counter(citylist).most_common(2)
+
+    for i in range(0,1000):
+        if i not in z2primarycity.keys():
+            z2primarycity[i] = 'No primary city for zip3 {}'.format(i)
+
+    json.dump(z2primarycity, open(os.path.join(reference_data_dir, 'zip2primarycity.json'),'w'))
+
+
+def save_charity_pct():
+    irs = pd.read_csv('/Users/marcshivers/Downloads/12zpallagi.csv')
+    irs['zip3'] = irs['zipcode'].apply(lambda x:int(x/100))
+    irs = irs.ix[irs['AGI_STUB']<5]
+    grp = irs.groupby('zip3')
+    grp_sum = grp.sum()
+    tax_df = pd.DataFrame({'agi':grp_sum['A00100'], 'charity':grp_sum['A19700']})
+    tax_df['pct'] = tax_df['charity'] * 1.0 / tax_df['agi']
+    json.dump(tax_df['pct'].to_dict(), open(os.path.join(reference_data_dir, 'charity_pct.json'), 'w'))
+
+
+def get_external_data():
+    #def build_zip3_to_hpi():
+    z2c = pd.read_csv(os.path.join(reference_data_dir, 'zip2cbsa.csv'))
+    z2c['zip3'] = z2c['ZIP'].apply(lambda x: int(x/100))
+    z2c = z2c[z2c['CBSA']<99999]
+    grp = z2c.groupby('zip3')
+
+    z2clist = dict()
+    for z3 in grp.groups.keys():
+        g = grp.get_group(z3)
+        z2clist[z3] = sorted(list(set(g['CBSA'].values)))
+
+
+    # get metro hpi for main areas
+    link = "http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_metro.csv"
+    cols = ['Location','CBSA', 'yr','qtr','index', 'stdev']
+    try:
+        data = pd.read_csv(link, header=None, names=cols)
+        data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_metro.csv'))
+    except:
+        print 'Failed to read FHFA website HPI data; using cached data'
+        data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_metro.csv'), header=None, names=cols)
+
+    data = data[data['index']!='-']
+    data['index'] = data['index'].astype(float)
+    data['yyyyqq'] = 100 * data['yr'] + data['qtr'] 
+    data = data[data['yyyyqq']>199000]
+
+    index = np.log(data.pivot('yyyyqq', 'CBSA', 'index'))
+    hpa1q = index - index.shift(1) 
+    hpa1y = index - index.shift(4) 
+    hpa5y = index - index.shift(20)
+    hpa10y = index - index.shift(40)
+
+    hpa1 = dict()
+    hpa4 = dict()
+    hpa20 = dict()
+    hpa40 = dict()
+    for z,c in z2clist.items():
+        hpa1[z] = hpa1q.ix[:,c].mean(1)
+        hpa4[z] = hpa1y.ix[:,c].mean(1)
+        hpa20[z] = hpa5y.ix[:,c].mean(1)
+        hpa40[z] = hpa10y.ix[:,c].mean(1)
+    hpa1 = pd.DataFrame(hpa1).dropna(axis=1, how='all')
+    hpa4 = pd.DataFrame(hpa4).dropna(axis=1, how='all')
+    hpa20 = pd.DataFrame(hpa20).dropna(axis=1, how='all')
+    hpa40 = pd.DataFrame(hpa40).dropna(axis=1, how='all')
+
+    hpa1.to_csv(os.path.join(fhfa_data_dir,'hpa1.csv'))
+    hpa4.to_csv(os.path.join(fhfa_data_dir,'hpa4.csv'))
+    hpa20.to_csv(os.path.join(fhfa_data_dir,'hpa20.csv'))
+    hpa40.to_csv(os.path.join(fhfa_data_dir,'hpa40.csv'))
+
+    '''
+    # get non-metro hpi, for other zip codes
+    link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
+    try:
+        data = pd.read_excel(link, skiprows=2)
+        data.to_csv(os.path.join(parent_dir, 'HPI_AT_nonmetro.csv'))
+    except:
+        data = pd.read_csv(os.path.join(parent_dir,'HPI_AT_nonmetro.csv'))
+
+    grp = data.groupby('State')
+    tail5 = grp.tail(21).groupby('State')['Index']
+    chg5 = np.log(tail5.last()) - np.log(tail5.first())
+    tail1 = grp.tail(5).groupby('State')['Index']
+    chg1 = np.log(tail1.last()) - np.log(tail1.first())
+    chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
+
+    return chg
+    '''
+
+    # downloads the monthly non-seasonally adjusted employment data, and saves csv files for
+    # monthly labor force size, and number of unemployed by fips county code, to use to construct
+    # historical employment statistics by zip code for model fitting
+    z2f = json.load(file(os.path.join(reference_dir, 'zip3_fips.json'),'r'))
+
+    #z2f values are lists themselves; this flattens it
+    all_fips = []
+    for f in z2f.values():
+        all_fips.extend(f) 
+    fips_str = ['0'*(5-len(str(f))) + str(f) for f in all_fips]
+
+    data_code = dict()
+    data_code['03'] = 'unemployment_rate'
+    data_code['04'] = 'unemployment'
+    data_code['05'] = 'employment'
+    data_code['06'] = 'labor force'
+
+    #series_id = 'CN{}00000000{}'.format(fips, '06') 
+    cols = ['series_id', 'year', 'period', 'value']
+    link1 = 'http://download.bls.gov/pub/time.series/la/la.data.0.CurrentU10-14'
+    link2 = 'http://download.bls.gov/pub/time.series/la/la.data.0.CurrentU15-19'
+    cvt = dict([('series_id', lambda x: str(x).strip()) ])
+    data1 = pd.read_csv(link1, delimiter=r'\s+', usecols=cols, converters=cvt)
+    data2 = pd.read_csv(link2, delimiter=r'\s+', usecols=cols, converters=cvt)
+    data = pd.concat([data1, data2], ignore_index=True)
+    data = data.replace('-', np.nan)
+    data = data.dropna()
+    data = data.ix[data['period']!='M13']
+    data['value'] = data['value'].astype(float)
+    data['yyyymm'] = 100 * data['year'] + data['period'].apply(lambda x: int(x[1:]))
+    data['fips'] = [int(f[5:10]) for f in data['series_id']]
+    data['measure'] = [f[-2:] for f in data['series_id']]
+    data['region'] = [f[3:5] for f in data['series_id']]
+    del data['year'], data['period'], data['series_id']
+    county_data = data.ix[data['region']=='CN']
+    labor_force = county_data[county_data['measure']=='06'][['fips','yyyymm','value']]
+    labor_force = labor_force.pivot('yyyymm','fips','value')
+    unemployed = county_data[county_data['measure']=='04'][['fips','yyyymm','value']]
+    unemployed = unemployed.pivot('yyyymm','fips','value')
+    labor_force.to_csv(os.path.join(bls_data_dir, 'labor_force.csv'))
+    unemployed.to_csv(os.path.join(bls_data_dir, 'unemployed.csv'))
+
+    # reads the monthly labor force size, and number of unemployed by fips county code,
+    # and constructs historical employment statistics by zip code for model fitting
+    labor_force = labor_force.fillna(0).astype(int).rename(columns=lambda x:int(x))
+    unemployed = unemployed.fillna(0).astype(int).rename(columns=lambda x:int(x))
+
+    urates = dict()
+    for z,fips in z2f.items():
+        ue = unemployed.ix[:,fips].sum(1)
+        lf = labor_force.ix[:,fips].sum(1)
+        ur = ue/lf
+        ur[lf==0]=np.nan
+        urates[z] = ur
+
+    urate = pd.DataFrame(urates)
+    urate.to_csv(os.path.join(bls_data_dir, 'urate_by_3zip.csv'))
+        
