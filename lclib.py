@@ -10,12 +10,11 @@ from datetime import timedelta as td
 from collections import defaultdict, Counter
 import scipy.signal
 from matplotlib import pyplot as plt
+from personalized import parent_dir
 
 LARGE_INT = 9999 
 NEGATIVE_ONE = -1 
 
-#parent_dir = '/home/apprun/LCModel/LCModel'
-parent_dir = '/Users/marcshivers/LCModel'
 data_dir = os.path.join(parent_dir, 'data')
 loanstats_dir = os.path.join(parent_dir, 'data/loanstats')
 training_data_dir = os.path.join(parent_dir, 'data/training_data')
@@ -591,12 +590,14 @@ def prestage(loan, min_rate, min_income):
 def invest_amount(loan, min_irr, max_invest=None):
     if max_invest==None:
         max_invest = 500
-    if loan['base_irr'] < min_irr:
+    if loan['stress_irr'] < min_irr:
         stage_amount = 0 
     else:
-        base_invest =  max(0, 25 * np.ceil(200*(loan['base_irr'] - min_irr)))
-        stress_invest =  max(0, 25 * np.ceil(400*(loan['stress_irr'] - min_irr)))
-        stage_amount = base_invest + stress_invest
+        # invest $25 for every 25bps that stress_irr exceeds min_irr
+        stage_amount =  max(0, 25 * np.ceil(400*(loan['stress_irr'] - min_irr)))
+    #don't invest in grade G loans; model doesn't work as well for those
+    if loan['grade'] >= 'G':
+        stage_amount = 0
     loan['max_stage_amount'] =  min(max_invest, stage_amount) 
 
 

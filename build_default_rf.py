@@ -61,7 +61,7 @@ dv = ['loan_amnt',
       'cur_bal-loan_amnt',
       'cur_bal_pct_loan_amnt'
     ]
-
+'''
 dv = ['loan_amnt', 
       'installment', 
       'sub_grade', 
@@ -88,7 +88,7 @@ dv = ['loan_amnt',
       'urate_range',
       'hpa4',
     ]
-
+'''
 
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
@@ -111,49 +111,34 @@ test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
+print sorted(zip(dv,forest.feature_importances_), key=lambda x: x[1])
+
 pf = forest.predict(x_test)
 predictions = [tree.predict(x_test) for tree in forest.estimators_]
 predictions = np.vstack(predictions).T  #loans X trees
 
 test_data = fit_data.ix[~fit_data.in_sample] 
 test_data['default_prob'] = pf
-pctls = range(10, 91, 10)
-for pct in pctls:
-    test_data['default_prob_{}'.format(pct)] = np.percentile(predictions, pct, axis=1)
+test_data['default_prob_65'] = np.percentile(predictions, 65, axis=1)
   
-grp = test_data.groupby(['sub_grade', 'term'])
-for pct in pctls:
-    print '\n\n', pct
-    for k in sorted(grp.groups.keys()):
-        sample = grp.get_group(k)
-        grp_predict = sample.default_prob
-        pctl10, grp_median, pctl90 = np.percentile(sample['default_prob_{}'.format(pct)].values, [10,50,90])
-        low = grp_predict<grp_median
-        high = grp_predict>=grp_median
-        low_prob_mean = 100*sample.ix[low, iv].mean()
-        high_prob_mean = 100*sample.ix[high, iv].mean() 
-        rate_diff = sample.ix[low, 'int_rate'].mean() - sample.ix[high, 'int_rate'].mean()
-        print k,
-        print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(low_prob_mean
-                , high_prob_mean, high_prob_mean - low_prob_mean, rate_diff)
-
+res = list()
 grp = test_data.groupby(['grade', 'term'])
-for pct in pctls:
-    default_fld = 'default_prob_{}'.format(pct)
-    print '\n\n', pct
-    for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
-        sample = grp.get_group(k)
-        grp_predict = sample[default_fld]
-        pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
-        bottom = grp_predict<=pctl10
-        top = grp_predict>=pctl90
-        bottom_prob_mean = 100*sample.ix[bottom, iv].mean()
-        top_prob_mean = 100*sample.ix[top, iv].mean() 
-        rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
-        print k,
-        print '{:1.2f}%, {:1.2f}%, {:1.2f}%, {:1.2f}'.format(bottom_prob_mean
-                , top_prob_mean, top_prob_mean - bottom_prob_mean, rate_diff)
-       
+default_fld = 'default_prob_65'
+for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
+    sample = grp.get_group(k)
+    grp_predict = sample[default_fld]
+    pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
+    bottom = grp_predict<=pctl10
+    top = grp_predict>=pctl90
+    bottom_prob_mean = 100*sample.ix[bottom, iv].mean()
+    bottom_prob_actual = 100*grp_predict[bottom].mean()
+    top_prob_mean = 100*sample.ix[top, iv].mean() 
+    top_prob_actual = 100*grp_predict[top].mean()
+    rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
+    res.append([k, bottom_prob_actual, bottom_prob_mean, top_prob_mean, top_prob_actual, 
+                top_prob_mean - bottom_prob_mean, top_prob_actual - bottom_prob_actual, rate_diff])
+res = pd.DataFrame(res)
+print res
 
 
 titlestr = '{:>8s}'*7 + '\n'

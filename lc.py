@@ -309,7 +309,7 @@ def main(min_irr=11, max_invest=500):
                 amount_to_invest = loan['max_stage_amount'] - loan['staged_amount']
                 if amount_to_invest>0:
                     amount_staged = 0
-                    if loan['stress_irr_tax'] > 0.04:
+                    if loan['stress_irr_tax'] > 0.04 and loan['grade'] < 'G':
                         amount_staged = stage_order_fast(lc_tax, loan['id'], 500)
                     amount_staged += stage_order_fast(lc_ira, loan['id'], amount_to_invest)
 

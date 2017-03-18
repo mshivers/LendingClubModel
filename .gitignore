@@ -2,6 +2,7 @@
 *.pyc
 *.sw[a-z]
 *.old
+personalized.py
 /data/bls_data
 /data/fhfa_data
 /data/loanstats

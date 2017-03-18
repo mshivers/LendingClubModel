@@ -9,21 +9,17 @@ import requests
 
 
 def get_notes(account='ira'):
-    
+    import personalized as p
+
     if account == 'all':
         return get_notes('ira') + get_notes('tax')
 
-    taxable_id = 21187915
-    taxable_key = 'k1ERom59eg9I39i6ERdotagIlQo='
-    ira_id = 27097986
-    ira_key = 'wBQitzG0rab9WPReJItUBc0wMOo='
-
     if account == 'ira':
-        id = ira_id
-        key = ira_key
+        id = p.ira_id
+        key = p.ira_key
     else:
-        id = taxable_id
-        key = taxable_key
+        id = p.taxable_id
+        key = p.taxable_key
 
     notes = []
     url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/detailednotes'.format(id)
