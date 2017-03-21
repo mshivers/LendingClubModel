@@ -11,8 +11,9 @@ import random_forest_model as rfm
 import lclib
 import json
 import requests
+import personalized as p
 
-log = open(os.path.join(lclib.parent_dir, 'logfile.txt'), 'a')
+log = open(os.path.join(p.parent_dir, 'logfile.txt'), 'a')
 
 
 def stage_order_fast(lc, id, amount):
@@ -127,7 +128,7 @@ def get_new_loans_REST():
     loans = []
     try:
         result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
-                              headers={'Authorization': 'k1ERom59eg9I39i6ERdotagIlQo='})
+                              headers={'Authorization': p.LC_authorization})
         if result.status_code == 200:  #success
             result_js = result.json()
             if 'loans' in result_js.keys():
@@ -239,8 +240,8 @@ def login(lc_ira, lc_tax):
 
     pw = getpass.getpass('Password:')
     print '\nLogging in...'
-    lc_ira.authenticate(email='marcshivers@gmail.com', password=pw)
-    lc_tax.authenticate(email='marc.shivers@gmail.com', password=pw)
+    lc_ira.authenticate(email=p.lc_ira_email, password=pw)
+    lc_tax.authenticate(email=p.lc_tax_email, password=pw)
 
 
 lc_ira = LendingClub()

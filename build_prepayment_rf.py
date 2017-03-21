@@ -44,29 +44,29 @@ dv = [
       'loan_pct_income',
     ]
 
+
+
+
+
+
+
 iv = '12m_prepay'
-extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'int_rate']
+extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
                 if tmp not in dv]
 
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
-finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<inf
+
+finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<np.inf
 fit_data = fit_data.ix[finite]
 
-oos_cutoff = str(oos_cutoff)
-cv_begin = oos_cutoff
-cv_end = str(dt(2016,3,1))
-print 'OOS Cutoff: {}'.format(oos_cutoff)
-
 fit_data = fit_data.sort('issue_d')
-isdx = fit_data['issue_d'] < oos_cutoff 
-x_train = fit_data.loc[isdx,:][dv].values
-y_train = fit_data.loc[isdx,:][iv].values
-oos = (fit_data['issue_d']>= cv_begin) & (fit_data['issue_d']< cv_end) 
-y_test = fit_data.loc[oos,:][iv].values
-x_test = fit_data.loc[oos,:][dv].values
-test_int_rate = fit_data.loc[oos]['int_rate'].values
-test_term = fit_data.loc[oos]['term'].values
+x_train = fit_data.ix[fit_data.in_sample,:][dv].values
+y_train = fit_data.ix[fit_data.in_sample,:][iv].values
+y_test = fit_data.ix[~fit_data.in_sample,:][iv].values
+x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
+test_int_rate = fit_data.ix[~fit_data.in_sample, 'int_rate'].values
+test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 
 forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
 forest = forest.fit(x_train, y_train) 

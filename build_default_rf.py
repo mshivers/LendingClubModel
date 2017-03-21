@@ -141,43 +141,7 @@ res = pd.DataFrame(res)
 print res
 
 
-titlestr = '{:>8s}'*7 + '\n'
-printstr = '{:>8.2f}'*6 + '{:>8.0f}\n'
 data_str = ''
-int_ranges = [[0,7],[7,10],[10,12],[12,13.5],[13.5,15],[15,17],[17,20],[20,30]]
-for int_range in int_ranges:
-    data_str += '\nInt Range: [{},{}]\n'.format(*int_range)
-    data_str += titlestr.format('LAlpha','UAlpha','ROE','DExp','DAct','Rate','Num')
-    cdx = np.all(zip(test_int_rate>=int_range[0], test_int_rate<=int_range[1]), 1)
-    range_alphas = alpha[cdx] 
-    pctls = np.arange(0,101,10)
-    cutoffs = np.percentile(range_alphas, pctls)
-    for lower, upper in zip(cutoffs[:-1], cutoffs[1:]):
-        idx = np.all(zip(range_alphas>=lower, range_alphas<upper), axis=1)
-        empirical_default = 100*(y_test*mult)[cdx][idx].mean()
-        model_default =100*(exp_loss[cdx][idx]).mean()
-        int_rate = test_int_rate[cdx][idx].mean()
-        range_roe = int_rate - empirical_default
-        data = (lower,upper, range_roe, model_default,empirical_default, int_rate, sum(idx))
-        data_str += printstr.format(*data)
-
-    data_str += titlestr.format('LIRR','UIRR','ROE','DExp','DAct','Rate','Num')
-    cdx = np.all(zip(test_int_rate>=int_range[0], test_int_rate<=int_range[1]), 1)
-    range_irrs = irr[cdx]
-    cutoffs = np.percentile(range_irrs, pctls)
-    for lower, upper in zip(cutoffs[:-1], cutoffs[1:]):
-        idx = np.all(zip(range_irrs>=lower, range_irrs<upper), axis=1)
-        empirical_default = 100*(y_test*mult)[cdx][idx].mean()
-        model_default =100*(exp_loss[cdx][idx]).mean()
-        int_rate = test_int_rate[cdx][idx].mean()
-        range_roe = int_rate - empirical_default
-        data = (lower,upper, range_roe, model_default,empirical_default, int_rate, sum(idx))
-        data_str += printstr.format(*data)
-
-data_str += '\n\n{}\t{}\t{}'.format('MinAlpha', 'ROE', 'Count')
-for min_alpha in range(-5, 16):
-    portfolio = alpha > min_alpha 
-    data_str+= '\n{}\t{:1.2f}\t{}'.format(min_alpha, roe[portfolio].mean(), sum(portfolio))
 
 forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
 data_str += '\n\nForest Importance\n'
@@ -192,9 +156,6 @@ print data_str
 fname = os.path.join(parent_dir, 'fits/forest_{}.txt'.format(dt.now().strftime('%Y_%m_%d_%H_%M_%S')))
 with open(fname,'a') as f:
     f.write(data_str)
-
-
-
 
 
 # pickle the classifier for persistence

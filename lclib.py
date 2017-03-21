@@ -10,18 +10,18 @@ from datetime import timedelta as td
 from collections import defaultdict, Counter
 import scipy.signal
 from matplotlib import pyplot as plt
-from personalized import parent_dir
+import personalized as p
 
 LARGE_INT = 9999 
 NEGATIVE_ONE = -1 
 
-data_dir = os.path.join(parent_dir, 'data')
-loanstats_dir = os.path.join(parent_dir, 'data/loanstats')
-training_data_dir = os.path.join(parent_dir, 'data/training_data')
-reference_data_dir = os.path.join(parent_dir, 'data/reference_data')
-bls_data_dir = os.path.join(parent_dir, 'data/bls_data')
-fhfa_data_dir = os.path.join(parent_dir, 'data/fhfa_data')
-saved_prod_data_dir = os.path.join(parent_dir, 'data/saved_prod_data')
+data_dir = os.path.join(p.parent_dir, 'data')
+loanstats_dir = os.path.join(p.parent_dir, 'data/loanstats')
+training_data_dir = os.path.join(p.parent_dir, 'data/training_data')
+reference_data_dir = os.path.join(p.parent_dir, 'data/reference_data')
+bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
+fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
+saved_prod_data_dir = os.path.join(p.parent_dir, 'data/saved_prod_data')
 
 payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170215.csv')
 cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
@@ -316,7 +316,7 @@ def calc_log_odds(x, log_odds_dict, tok_len):
 
 def load_tok4_clean_title_log_odds_func():
     ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(parent_dir,'prod_tok4_clean_title_log_odds.json'),'r'))
+    data = json.load(open(os.path.join(p.parent_dir,'prod_tok4_clean_title_log_odds.json'),'r'))
     data = defaultdict(lambda :0, data)
     def calc_log_odds(x, log_odds_dict, tok_len):
         if len(x)==0:
@@ -330,7 +330,7 @@ def load_tok4_clean_title_log_odds_func():
 
 def load_tok4_emp_title_log_odds_func():
     ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(parent_dir,'tok4_recent_employer_title_log_odds.json'),'r'))
+    data = json.load(open(os.path.join(p.parent_dir,'tok4_recent_employer_title_log_odds.json'),'r'))
     data = defaultdict(lambda :0, data)
     def calc_log_odds(x, log_odds_dict, tok_len):
         if len(x)==0:
@@ -344,7 +344,7 @@ def load_tok4_emp_title_log_odds_func():
 
 def load_tok4_emp_name_log_odds_func():
     ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(parent_dir,'tok4_employer_name_log_odds.json'),'r'))
+    data = json.load(open(os.path.join(p.parent_dir,'tok4_employer_name_log_odds.json'),'r'))
     data = defaultdict(lambda :0, data)
     def log_odds_func(x):
         return calc_log_odds(x, data, tok_len=4)
@@ -372,7 +372,7 @@ def tokenize_capitalization(txt):
 
 def load_tok4_capitalization_log_odds_func():
     ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(parent_dir,'new_capitalization_log_odds.json'),'r'))
+    data = json.load(open(os.path.join(p.parent_dir,'new_capitalization_log_odds.json'),'r'))
     data = defaultdict(lambda :0, data)
     def log_odds_func(x):
         cap = tokenize_capitalization(x)
@@ -692,13 +692,13 @@ def send_email(msg):
     server = smtplib.SMTP('smtp.gmail.com:587')
     server.ehlo()
     server.starttls()
-    server.login('marc.shivers@gmail.com', 'udxqmiraraiudjux')
-    msg_list = ['From: marc.shivers@gmail.com', 
-                       'To: marc.shivers@gmail.com', 
-                       'Subject: Lending Club', '']
+    server.login(p.email, p.smtp_password)
+    msg_list = ['From: {}'.format(p.email), 
+                'To: {}'.format(p.email), 
+                'Subject: Lending Club', '']
     msg_list.append(msg)
     msg = '\r\n'.join(msg_list) 
-    server.sendmail('marc.shivers@gmail.com',['marc.shivers@gmail.com'],msg)
+    server.sendmail(p.email, [p.email], msg)
     return
 
 
@@ -1010,8 +1010,8 @@ def construct_loan_dict(grade, term, rate, amount):
 
 
  #TODO: pass default and prepayment curves in as arguments
-default_curves = json.load(open(os.path.join(parent_dir, 'default_curves.json'), 'r'))
-prepay_curves = json.load(open(os.path.join(parent_dir, 'prepay_curves.json'), 'r'))
+default_curves = json.load(open(os.path.join(p.parent_dir, 'default_curves.json'), 'r'))
+prepay_curves = json.load(open(os.path.join(p.parent_dir, 'prepay_curves.json'), 'r'))
 def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
     ''' All calculations assume a loan amount of $1.
     Note the default curves are the cumulative percent of loans that have defaulted prior 
@@ -1463,9 +1463,9 @@ def get_external_data():
     link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
     try:
         data = pd.read_excel(link, skiprows=2)
-        data.to_csv(os.path.join(parent_dir, 'HPI_AT_nonmetro.csv'))
+        data.to_csv(os.path.join(p.parent_dir, 'HPI_AT_nonmetro.csv'))
     except:
-        data = pd.read_csv(os.path.join(parent_dir,'HPI_AT_nonmetro.csv'))
+        data = pd.read_csv(os.path.join(p.parent_dir,'HPI_AT_nonmetro.csv'))
 
     grp = data.groupby('State')
     tail5 = grp.tail(21).groupby('State')['Index']
