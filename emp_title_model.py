@@ -26,9 +26,8 @@ def substrings(x):
 
 if 'df' not in locals().keys():
     df = lclib.load_training_data()
-    oos_cutoff = dt(2014,1,1)
-    isdx = df['issue_d'] < oos_cutoff 
-    oos = ~isdx & (df['issue_d']<dt(2014,3,1))
+    isdx = df.in_sample
+    oos = ~isdx 
     
     is_df = df.ix[isdx,['clean_title', '12m_wgt_default', 'int_rate']].copy()
     oos_df = df.ix[oos,['clean_title', '12m_wgt_default', 'int_rate']].copy()

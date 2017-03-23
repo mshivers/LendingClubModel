@@ -128,7 +128,7 @@ def get_new_loans_REST():
     loans = []
     try:
         result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
-                              headers={'Authorization': p.LC_authorization})
+                              headers={'Authorization': p.new_loan_key})
         if result.status_code == 200:  #success
             result_js = result.json()
             if 'loans' in result_js.keys():
@@ -258,7 +258,8 @@ def main(min_irr=11, max_invest=500):
     cash_update = dt.now()
     print 'IRA cash balance is ${}'.format(cash_ira)
     print 'Tax cash balance is ${}'.format(cash_tax)
-  
+    ExternalData = lclib.ExternalDataManager()
+
     while True:
         print '\n{}: Checking for new loans'.format(dt.now())
         last_search_loans = get_new_loans_REST()
@@ -279,7 +280,7 @@ def main(min_irr=11, max_invest=500):
 
             #Parse inputs and add features
             if loan['inputs_parsed']==False:
-                lclib.add_external_features(loan)
+                ExternalData.add_features_to_loan(loan)
                 loan['inputs_parsed'] = True
             
             if loan['inputs_parsed']==True: 
@@ -290,12 +291,12 @@ def main(min_irr=11, max_invest=500):
                     rfm.calc_prepayment_risk(loan)        
 
                     # calc standard irr
-                    npv = lclib.calc_npv(loan, loan['default_risk'], loan['prepay_risk'], min_irr/100.)
-                    loan['base_irr'], loan['base_npv'], loan['base_irr_tax'], loan['base_npv_tax'] = npv
+                    irr = rfm.IRRCalculator.calc_irr(loan, loan['default_risk'], loan['prepay_risk'])
+                    loan['base_irr'], loan['base_irr_tax'] = irr
 
-                    # calc standard irr
-                    npv = lclib.calc_npv(loan, loan['default_max'], loan['prepay_max'], min_irr/100.)
-                    loan['stress_irr'], loan['stress_npv'], loan['stress_irr_tax'], loan['stress_npv_tax'] = npv
+                    # calc stressed irr
+                    stress_irr = rfm.IRRCalculator.calc_irr(loan, loan['default_max'], loan['prepay_max'])
+                    loan['stress_irr'], loan['stress_irr_tax'] = stress_irr
 
                     lclib.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 
 

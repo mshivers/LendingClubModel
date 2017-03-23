@@ -11,7 +11,6 @@ import lclib
 import personalized as p
 
 model_hash = 'YMHVDZ'
-#model_hash = 'HLKMGF'
 model_path = os.path.join(p.parent_dir, model_hash)
 
 default_model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')
@@ -22,19 +21,21 @@ prepayment_model_file = os.path.join(model_path, 'prepayment_risk_model.pkl')
 prepayment_model = joblib.load(prepayment_model_file) 
 prepayment_model.verbose=0
 
+default_curves = json.load(open(os.path.join(model_path, 'default_curves.json'), 'r'))
+prepay_curves = json.load(open(os.path.join(model_path, 'prepay_curves.json'), 'r'))
+IRRCalculator = lclib.ReturnCalculator(default_curves, prepay_curves)
 
-#updated prod model
-prod_clean_title_map = json.load(open(os.path.join(model_path, 'prod_clean_title_map.json'),'r'))
+prod_clean_title_map = json.load(open(os.path.join(model_path, 'clean_title_rank_map.json'),'r'))
 prod_clean_title_map = defaultdict(lambda :1e9, prod_clean_title_map )
 
-tok4_cap_title_dict = json.load(open(os.path.join(model_path, 'prod_tok4_capitalization_log_odds.json'),'r'))
-tok4_cap_title_dict = defaultdict(lambda :0, tok4_cap_title_dict)
+caplo_dict = json.load(open(os.path.join(model_path, 'caplo.json'),'r'))
+caplo_dict = defaultdict(lambda :0, caplo_dict)
 #Note the input x is already in '^{}$' format
-cap_title_odds = lambda x: lclib.calc_log_odds(x, tok4_cap_title_dict, 4)
+cap_title_odds = lambda x: lclib.calc_log_odds(x, caplo_dict, 4)
         
-tok4_clean_title_dict =json.load(open(os.path.join(model_path, 'prod_tok4_clean_title_log_odds.json'),'r'))
-tok4_clean_title_dict = defaultdict(lambda :0, tok4_clean_title_dict)
-clean_title_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), tok4_clean_title_dict, 4)
+ctlo_dict =json.load(open(os.path.join(model_path, 'ctlo.json'),'r'))
+ctlo_dict = defaultdict(lambda :0, ctlo_dict)
+clean_title_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), ctlo_dict, 4)
 
 pctlo_dict = json.load(open(os.path.join(model_path, 'pctlo.json'),'r'))
 pctlo_dict = defaultdict(lambda :0, pctlo_dict)
@@ -82,7 +83,6 @@ def parse_REST_loan_details(loan):
         loan['pub_rec'] = float(loan['pubRec'])
         loan['revol_util'] = float(loan['revolUtil'])
         loan['total_acc'] = float(loan['totalAcc'])
-        #loan['is_inc_verified'] = float(loan['isIncV']=='VERIFIED')
         loan['is_inc_verified'] = lclib.api_verification_dict[loan['isIncV']]
 
         loan['monthly_int_payment'] = loan['loan_amount'] * loan['int_rate'] / 1200.0 
@@ -104,56 +104,6 @@ def parse_REST_loan_details(loan):
 
     except:
         print '\n\n\nPARSE FAILED!!!\n\n\n'
-    return loan
-
-
-def parse_loan_details(loan):
-    try:
-        loan['currentJobTitle'] = lclib.only_ascii(loan['currentJobTitle'])
-        loan['currentCompany'] = lclib.only_ascii(loan['currentCompany'])
-        loan['int_rate'] = float(loan['loanRate'])
-        loan['loan_amount'] = float(loan['loanAmt'])
-        grossIncome = loan['grossIncome'].replace('n/a','0') 
-        loan['annual_income'] = 12.0*float(grossIncome.split('/')[0].replace('$','').replace(',',''))
-        loan['monthly_payment'] = float(loan['monthlyPayment'].replace('$','').replace(',',''))
-        loan['revol_bal'] = float(loan['revolvingCreditBalance'].replace('$','').replace(',',''))
-        loan['emp_title'] = loan['currentJobTitle'].strip().replace('n/a','Blank')
-        loan['emp_name'] = loan['currentCompany'].strip().replace('n/a','Blank')
-        loan['capitalization_title'] = lclib.tokenize_capitalization(loan['emp_title'])
-        loan['clean_title'] = lclib.clean_title(loan['emp_title'])
-        loan['clean_short_title'] = loan['clean_title'][:4]
-        loan['mod_rate'] = int(10*loan['int_rate'])-10*int(loan['int_rate'])
-        loan['loan_term'] = float(loan['loanLength'])
-        loan['dti'] = float(loan['DTI'])
-        loan['delinq_2yrs'] = float(loan['lateLast2yrs'])
-        loan['fico_score'] = float(loan['fico'].split('-')[0])
-        loan['zip3'] = float(loan['location'][:3])
-        loan['state'] = loan['location'][-2:]
-        loan['inq_last_6mths'] = float(loan['inquiriesLast6Months'])
-        loan['mths_since_last_delinq'] = float(loan['monthsSinceLastDelinquency'].replace('n/a','-1'))
-        loan['mths_since_last_record'] = float(loan['monthsSinceLastRecord'].replace('n/a','-1'))
-        loan['open_acc'] = float(loan['openCreditLines'])
-        loan['pub_rec'] = float(loan['publicRecordsOnFile'])
-        loan['revol_util'] = float(loan['revolvingLineUtilization'].replace('n/a','0').replace('%',''))
-        loan['total_acc'] = float(loan['totalCreditLines'])
-        loan['is_inc_verified'] = float(loan['verifiedIncome']=='true')
-        loan['monthly_int_payment'] = loan['loan_amount'] * loan['int_rate'] / 1200.0 
-        earliest_credit = dt.strptime(loan['earliestCreditLine'],'%m/%Y')
-        seconds_per_year = 365*24*60*60.0
-        loan['credit_length'] = (dt.now() - earliest_credit).total_seconds() / seconds_per_year
-        loan['subgrade_number'] = lclib.subgrade_map[loan['loanGrade']]
-        loan['purpose_number'] = lclib.purpose_mapping(loan['purpose'])
-        loan['emp_length'] = lclib.employment_length_map(loan['completeTenure'])
-        loan['home_status_number'] = lclib.home_map[loan['homeOwnership'].upper()]
-        loan['even_loan_amount'] = float(loan['loan_amount'] == np.round(loan['loan_amount'],-3))
-        loan['revol_bal-loan'] = loan['revol_bal'] - loan['loan_amount'] 
-        loan['issue_mth'] = dt.now().month
-        loan['capitalization_log_odds'] = cap_title_odds(loan['capitalization_title'])
-        loan['clean_title_log_odds'] = clean_title_odds(loan['clean_title'])
-        assert loan['annual_income']>0
-
-    except:
-        return -1
     return loan
 
 
@@ -258,7 +208,7 @@ def calc_default_risk(loan):
         loan['default_max'] =  np.percentile(predictions, 65)
     
     except Exception as e:
-        msg = 'Error in random_forest_model.py::default_risk()'
+        msg = 'Error in production_model.py::default_risk()'
         msg += '\n{}: Error {} in evaluating random forest\n'.format(dt.now(), str(e))
         msg +='\nInput Loan data:\n'
         for k,v in loan.iteritems():
@@ -313,7 +263,7 @@ def calc_prepayment_risk(loan):
     
 
     except Exception as e:
-        msg = 'Error in random_forest_model.py::prepay_risk()'
+        msg = 'Error in production_model.py::prepay_risk()'
         msg += '\n{}: Error {} in evaluating random forest\n'.format(dt.now(), str(e))
         msg +='\nInput Loan data:\n'
         for k,v in loan.iteritems():

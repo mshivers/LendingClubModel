@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 import os
 import json
 from lclib import parent_dir, load_training_data, calc_log_odds, tokenize_capitalization
-from lclib import oos_cutoff, construct_loan_dict, calc_npv
+from lclib import construct_loan_dict
 
 if 'df' not in locals().keys():
     df = load_training_data()
@@ -76,7 +76,7 @@ predicted_prepayment = forest.predict(x_test)
 
 titlestr = '{:>8s}'*6 + '\n'
 printstr = '{:>8.2f}'*5 + '{:>8.0f}\n'
-data_str = 'OOS Cutoff = {}\n\n'.format(str(oos_cutoff))
+data_str = ''
 pctls = np.arange(0,101,10)
 cutoffs = np.percentile(predicted_prepayment, pctls)
 paid = fit_data.ix[oos, 'loan_status']=='Fully Paid'

@@ -28,9 +28,6 @@ cached_training_data_file = os.path.join(training_data_dir, 'cached_training_dat
 
 update_hrs = [1,5,9,13,17,21]
 
-#oos_cutoff = np.datetime64('2015-04-15')
-oos_cutoff = '2016-01-01'
-
 # clean dataframe
 home_map = dict([('ANY', 0), ('NONE',0), ('OTHER',0), ('RENT',1), ('MORTGAGE',2), ('OWN',3)])
 
@@ -297,58 +294,12 @@ def cache_training_data():
 def only_ascii(s):
     return ''.join([c for c in s if ord(c)<128])
 
-def calc_regularized_log_odds(x, log_odds_dict, tok_len):
-    if len(x)==0:
-        return 0
-    toks = [x[i:i+tok_len] for i in range(max(1,len(x)-tok_len+1))]
-    tok_odds = np.array(map(lambda x:log_odds_dict[x], toks))
-    tok_odds[1+np.where(tok_odds[:-1]==0)[0]] = 0
-    tok_odds[np.where(tok_odds[1:]==0)[0]] = 0
-    return np.mean(tok_odds[tok_odds!=0])
-
-
 def calc_log_odds(x, log_odds_dict, tok_len):
     if len(x)==0:
         return 0
     toks = np.unique([x[i:i+tok_len] for i in range(max(1,len(x)-tok_len+1))])
     log_odds = np.sum(map(lambda x:log_odds_dict[x], toks))
     return log_odds
-
-def load_tok4_clean_title_log_odds_func():
-    ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(p.parent_dir,'prod_tok4_clean_title_log_odds.json'),'r'))
-    data = defaultdict(lambda :0, data)
-    def calc_log_odds(x, log_odds_dict, tok_len):
-        if len(x)==0:
-            return 0
-        toks = [x[i:i+tok_len] for i in range(max(1,len(x)-tok_len+1))]
-        log_odds = np.mean(map(lambda x:log_odds_dict[x], toks))
-        return log_odds
-    def log_odds_func(x):
-        return calc_log_odds(x, data, tok_len=4)
-    return log_odds_func
-
-def load_tok4_emp_title_log_odds_func():
-    ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(p.parent_dir,'tok4_recent_employer_title_log_odds.json'),'r'))
-    data = defaultdict(lambda :0, data)
-    def calc_log_odds(x, log_odds_dict, tok_len):
-        if len(x)==0:
-            return 0
-        toks = [x[i:i+tok_len] for i in range(max(1,len(x)-tok_len+1))]
-        log_odds = np.mean(map(lambda x:log_odds_dict[x], toks))
-        return log_odds
-    def log_odds_func(x):
-        return calc_log_odds(x, data, tok_len=4)
-    return log_odds_func
-
-def load_tok4_emp_name_log_odds_func():
-    ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(p.parent_dir,'tok4_employer_name_log_odds.json'),'r'))
-    data = defaultdict(lambda :0, data)
-    def log_odds_func(x):
-        return calc_log_odds(x, data, tok_len=4)
-    return log_odds_func
 
 def tokenize_capitalization(txt):
     txt = txt.strip()
@@ -369,55 +320,6 @@ def tokenize_capitalization(txt):
     tokenized = '^{}$'.format(tokenized) #add leading a trailing token to distinguish first and last characters.
     return tokenized
 
-
-def load_tok4_capitalization_log_odds_func():
-    ''' loads a dictionary mapping each 4-letter string into a log-odds value. '''
-    data = json.load(open(os.path.join(p.parent_dir,'new_capitalization_log_odds.json'),'r'))
-    data = defaultdict(lambda :0, data)
-    def log_odds_func(x):
-        cap = tokenize_capitalization(x)
-        return calc_log_odds(cap, data, tok_len=4)
-    return log_odds_func
-
-
-def create_clean_title_log_odds_json(df=None, fname='ctloC.json', tok_len=4, fld_name='clean_title',
-        target_name='12m_wgt_default'):
-    if df == None:
-        df = load_training_data()
-    #employer name was in the emp_title field before 9/24/13
-    
-    # include only data before oos cutoff, and for C-grade loans or worse
-    idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff) & (df['grade']>=2)
-    training = df[idx].copy()
-
-    toks = list()
-    titles = training[fld_name].apply(lambda x:'^{}$'.format(x)) #add string boundary tokens
-
-    for ct in titles.values:
-        toks.extend([ct[i:i+tok_len] for i in range(max(1,len(ct)-tok_len+1))])
-
-    tok_df = pd.DataFrame(Counter(toks).items(), columns=['tok', 'freq'])
-    tok_df = tok_df.sort('freq',ascending=False)
-    
-    odds_map = dict()
-    mean_default = training[target_name].mean() 
-    C = 2000 #regularized number of mean defaults
-    for _, row in tok_df.iterrows():
-        tok, freq = row
-        if freq < 1000:
-            continue 
-        training['has_tok'] = titles.apply(lambda x: tok in x)
-        grp = training.groupby('has_tok')
-        default_sum = grp.sum()[target_name] + C * mean_default
-        default_count = grp.count()[target_name] + C
-        regularized_default = default_sum  / default_count 
-        log_odds = np.log(regularized_default[True]) - np.log(regularized_default[False])
-        print default_count[True], '"{}"'.format(tok), '{:1.2f}'.format(log_odds)
-        print regularized_default
-        print '\n'
-        odds_map[tok] = log_odds
-
-    return odds_map
 
 def get_tokens(tok_str, tok_len=4):
     title = '^{}$'.format(tok_str) #add string boundary tokens
@@ -440,114 +342,6 @@ def fast_create_log_odds(df, string_fld='clean_title', numeric_fld='12m_wgt_defa
     logodds = (pd.Series(fld_sum) + C * numeric_mean) / (pd.Series(fld_count) + C)
     logodds = np.log(logodds) - np.log(numeric_mean)
     return logodds.to_dict() 
-
-
-
-def create_capitalization_log_odds_json(df=None, fname='caploC.json', tok_len=4, fld_name='emp_title'):
-    if df == None:
-        df = load_training_data()
-
-    # include only data before oos cutoff, and for C-grade loans or worse
-    idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff) & (df['grade']>=2)
-    df = df[idx].copy()
-
-    toks = list()
-    df['tokenized'] = df[fld_name].apply(tokenize_capitalization)
-    for ct in df['tokenized'].values:
-       toks.extend([ct[i:i+tok_len] for i in range(max(1,len(ct)-tok_len+1))])
-
-    tok_df = pd.DataFrame(Counter(toks).items(), columns=['tok', 'freq'])
-    tok_df = tok_df.sort('freq',ascending=False)
-
-    odds_map = dict()
-    mean_default = df['12m_wgt_default'].mean() 
-    C = 2000 #regularized number of mean defaults
-    for _, row in tok_df.iterrows():
-        tok, freq = row
-        if freq < 2000:
-            continue 
-        df['has_tok'] = df['tokenized'].apply(lambda x: tok in x)
-        grp = df.groupby('has_tok')
-        default_sum = grp.sum()['12m_wgt_default'] + C * mean_default
-        default_count = grp.count()['12m_wgt_default'] + C
-        regularized_default = default_sum  / default_count 
-        log_odds = np.log(regularized_default[True]) - np.log(mean_default)
-        print default_count[True], '"{}"'.format(tok), '{:1.2f}'.format(log_odds)
-        print regularized_default
-        print '\n'
-        odds_map[tok] = log_odds
-
-        json.dump(odds_map, open(os.path.join(training_data_dir, fname),'w'))
-    return odds_map
-
-
-def create_emp_name_log_odds_json(df, fname, tok_len=4, fld_name='emp_title'):
-    #employer name was in the emp_title field before 9/24/13
-    training = df[df['issue_d'] < np.datetime64('2013-10-01')].copy()
-    toks = list()
-    for ct in training[fld_name].values:
-        toks.extend([ct[i:i+tok_len] for i in range(max(1,len(ct)-tok_len+1))])
-
-    tok_df = pd.DataFrame(Counter(toks).items(), columns=['tok', 'freq'])
-    tok_df = tok_df.sort('freq',ascending=False)
-
-    odds_map = dict()
-    mean_default = training['12m_wgt_default'].mean() 
-    C = 1000 #regularized number of mean defaults
-    for _, row in tok_df.iterrows():
-        tok, freq = row
-        if freq < 200:
-            continue 
-        training['has_tok'] = training[fld_name].apply(lambda x: tok in x)
-        grp = training.groupby('has_tok')
-        default_sum = grp.sum()['12m_wgt_default'] + C * mean_default
-        default_count = grp.count()['12m_wgt_default'] + C
-        regularized_default = default_sum  / default_count 
-        log_odds = np.log(regularized_default[True]) - np.log(regularized_default[False])
-        print default_count[True], '"{}"'.format(tok), '{:1.2f}'.format(log_odds)
-        print regularized_default
-        print '\n'
-        odds_map[tok] = log_odds
-
-        json.dump(odds_map, open(os.path.join(training_data_dir, fname),'w'))
-    return odds_map
-
-
-
-def create_clean_title_dataset(df, fname, tok_len=4, fld_name='clean_title'):
-    #employer name was in the emp_title field before 9/24/13
-    
-    idx = (df['issue_d']>=np.datetime64('2013-10-01')) & (df['issue_d']<oos_cutoff)
-    training = df[idx].copy()
-
-    toks = list()
-    titles = training[fld_name].apply(lambda x:'^{}$'.format(x)) #add string boundary tokens
-
-    for ct in titles.values:
-        toks.extend([ct[i:i+tok_len] for i in range(max(1,len(ct)-tok_len+1))])
-
-    tok_df = pd.DataFrame(Counter(toks).items(), columns=['tok', 'freq'])
-    tok_df = tok_df.sort('freq',ascending=False)
-    
-    odds_map = dict()
-    mean_default = training['12m_wgt_default'].mean() 
-    for _, row in tok_df.iterrows():
-        tok, freq = row
-        training['has_tok'] = titles.apply(lambda x: tok in x)
-        grp = training.groupby('has_tok')
-        default_sum = grp.sum()['12m_wgt_default']
-        default_count = grp.count()['12m_wgt_default']
-        default = default_sum  / default_count 
-        log_odds = np.log(default[True]) - np.log(default[False])
-        print default_count[True], '"{}"'.format(tok), '{:1.2f}'.format(log_odds)
-        print default
-        print '\n'
-        odds_map[tok] = (default_sum[True], default_count[True], default_count[False]) 
-    df2 = pd.DataFrame(odds_map).T
-    df2.columns = ['default_wgt_sum', 'default_count', 'current_count']
-    df2.to_csv(open(os.path.join(training_data_dir, fname),'w'))
-    return df2 
-
 
 
 def reset_time():
@@ -581,11 +375,6 @@ def get_web_time():
 def hourfrac(tm):
     return (tm.hour + tm.minute/60.0 + tm.second / 3600.0)
 
-def prestage(loan, min_rate, min_income):
-    loanRate = float(loan['loanRate'])
-    income = float(loan['grossIncome'].split('/')[0].replace('$','').replace(',',''))
-    return (loanRate>=min_rate) and (income>min_income) and (loan['inquiriesLast6Months']==0)
-
 
 def invest_amount(loan, min_irr, max_invest=None):
     if max_invest==None:
@@ -614,53 +403,52 @@ def sleep_seconds(win_len=30):
 
 
 def detail_str(loan):
-    l = loan 
 
-    pstr = 'BaseIRR: {:1.2f}%'.format(100*l['base_irr'])
-    pstr += ' | StressIRR: {:1.2f}%'.format(100*l['stress_irr'])
-    pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*l['base_irr_tax'])
-    pstr += ' | StressIRRTax: {:1.2f}%'.format(100*l['stress_irr_tax'])
-    pstr += ' | IntRate: {}%'.format(l['int_rate'])
+    pstr = 'BaseIRR: {:1.2f}%'.format(100*loan['base_irr'])
+    pstr += ' | StressIRR: {:1.2f}%'.format(100*loan['stress_irr'])
+    pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*loan['base_irr_tax'])
+    pstr += ' | StressIRRTax: {:1.2f}%'.format(100*loan['stress_irr_tax'])
+    pstr += ' | IntRate: {}%'.format(loan['int_rate'])
 
-    pstr += '\nDefaultRisk: {:1.2f}%'.format(100*l['default_risk'])
-    pstr += ' | DefaultMax: {:1.2f}%'.format(100*l['default_max'])
-    pstr += ' | PrepayRisk: {:1.2f}%'.format(100*l['prepay_risk'])
-    pstr += ' | PrepayMax: {:1.2f}%'.format(100*l['prepay_max'])
-    pstr += ' | RiskFactor: {:1.2f}'.format(l['risk_factor'])
+    pstr += '\nDefaultRisk: {:1.2f}%'.format(100*loan['default_risk'])
+    pstr += ' | DefaultMax: {:1.2f}%'.format(100*loan['default_max'])
+    pstr += ' | PrepayRisk: {:1.2f}%'.format(100*loan['prepay_risk'])
+    pstr += ' | PrepayMax: {:1.2f}%'.format(100*loan['prepay_max'])
+    pstr += ' | RiskFactor: {:1.2f}'.format(loan['risk_factor'])
 
-    pstr += '\nInitStatus: {}'.format(l['initialListStatus'])
-    pstr += ' | Staged: ${}'.format(l['staged_amount'])
+    pstr += '\nInitStatus: {}'.format(loan['initialListStatus'])
+    pstr += ' | Staged: ${}'.format(loan['staged_amount'])
 
-    pstr += '\nLoanAmnt: ${:1,.0f}'.format(l['loanAmount'])
-    pstr += ' | Term: {}'.format(l['term'])
-    pstr += ' | Grade: {}'.format(l['subGrade'])
-    pstr += ' | Purpose: {}'.format(l['purpose'])
-    pstr += ' | LoanId: {}'.format(l['id'])
+    pstr += '\nLoanAmnt: ${:1,.0f}'.format(loan['loanAmount'])
+    pstr += ' | Term: {}'.format(loan['term'])
+    pstr += ' | Grade: {}'.format(loan['subGrade'])
+    pstr += ' | Purpose: {}'.format(loan['purpose'])
+    pstr += ' | LoanId: {}'.format(loan['id'])
     
-    pstr += '\nRevBal: ${:1,.0f}'.format(l['revolBal'])
-    pstr += ' | RevUtil: {}%'.format(l['revolUtil'])
-    pstr += ' | DTI: {}%'.format(l['dti'])
-    pstr += ' | Inq6m: {}'.format(l['inqLast6Mths'])
-    pstr += ' | 1stCredit: {}'.format(l['earliestCrLine'].split('T')[0])
-    pstr += ' | fico: {}'.format(l['ficoRangeLow'])
+    pstr += '\nRevBal: ${:1,.0f}'.format(loan['revolBal'])
+    pstr += ' | RevUtil: {}%'.format(loan['revolUtil'])
+    pstr += ' | DTI: {}%'.format(loan['dti'])
+    pstr += ' | Inq6m: {}'.format(loan['inqLast6Mths'])
+    pstr += ' | 1stCredit: {}'.format(loan['earliestCrLine'].split('T')[0])
+    pstr += ' | fico: {}'.format(loan['ficoRangeLow'])
   
-    pstr += '\nJobTitle: {}'.format(l['currentJobTitle'])
-    pstr += ' | Company: {}'.format(l['currentCompany'])
+    pstr += '\nJobTitle: {}'.format(loan['currentJobTitle'])
+    pstr += ' | Company: {}'.format(loan['currentCompany'])
     
-    pstr += '\nClean Title Log Odds: {:1.2f}'.format(l['clean_title_log_odds'])
-    pstr += ' | Capitalization Log Odds: {:1.2f}'.format(l['capitalization_log_odds'])
-    pstr += ' | Income: ${:1,.0f}'.format(l['annualInc'])
-    pstr += ' | Tenure: {}'.format(l['empLength'])
+    pstr += '\nClean Title Log Odds: {:1.2f}'.format(loan['clean_title_log_odds'])
+    pstr += ' | Capitalization Log Odds: {:1.2f}'.format(loan['capitalization_log_odds'])
+    pstr += ' | Income: ${:1,.0f}'.format(loan['annualInc'])
+    pstr += ' | Tenure: {}'.format(loan['empLength'])
 
-    pstr += '\nLoc: {},{}'.format(l['addrZip'], l['addrState'])
-    pstr += ' | MedInc: ${:1,.0f}'.format(l['med_income'])
-    pstr += ' | URate: {:1.1f}%'.format(100*l['urate'])
-    pstr += ' | 12mChg: {:1.1f}%'.format(100*l['urate_chg'])
+    pstr += '\nLoc: {},{}'.format(loan['addrZip'], loan['addrState'])
+    pstr += ' | MedInc: ${:1,.0f}'.format(loan['med_income'])
+    pstr += ' | URate: {:1.1f}%'.format(100*loan['urate'])
+    pstr += ' | 12mChg: {:1.1f}%'.format(100*loan['urate_chg'])
 
-    pstr += '\nHomeOwn: {}'.format(l['homeOwnership'])
-    pstr += ' | PrimaryCity: {}'.format(l['primaryCity'])
-    pstr += ' | HPA1: {:1.1f}%'.format(l['HPA1Yr'])
-    pstr += ' | HPA5: {:1.1f}%'.format(l['HPA5Yr'])
+    pstr += '\nHomeOwn: {}'.format(loan['homeOwnership'])
+    pstr += ' | PrimaryCity: {}'.format(loan['primaryCity'])
+    pstr += ' | HPA1: {:1.1f}%'.format(loan['HPA1Yr'])
+    pstr += ' | HPA5: {:1.1f}%'.format(loan['HPA5Yr'])
 
     return pstr 
 
@@ -682,8 +470,7 @@ email_keys = [ 'isIncV', 'totalRevHiLim', 'revolBal', 'numRevTlBalGt0', 'numTl90
         'totalIlHighCreditLimit', 'clean_title_rank']
 
 def all_detail_str(loan):
-    l = loan
-    all_details = '\n'.join(sorted(['{}: {}'.format(k,v) for k,v in l.items() 
+    all_details = '\n'.join(sorted(['{}: {}'.format(k,v) for k,v in loan.items() 
         if k in email_keys or k.startswith('dflt')]))
     return all_details 
 
@@ -972,153 +759,152 @@ def get_income_data(census, fips_list):
     return result
 
 
-bls = load_bls()
-census = load_census_data()
-z2f = defaultdict(lambda :list(), load_z2f())
-z2c = load_z2c()
-z2pc = load_z2primarycity()
-metro = load_metro_housing()
-nonmetro = load_nonmetro_housing()
+class ExternalDataManager(object):
+    def __init__(self):
 
-def add_external_features(l):
-    ''' Add all the external data sources to the loan details'''
+        self.bls = load_bls()
+        self.census = load_census_data()
+        self.z2f = defaultdict(lambda :list(), load_z2f())
+        self.z2c = load_z2c()
+        self.z2pc = load_z2primarycity()
+        self.metro = load_metro_housing()
+        self.nonmetro = load_nonmetro_housing()
 
-    zip3 = int(l['zip3'])
-    ur, avg_ur, ur_chg, ur_range = get_urate(bls, zip3)
-    l['urate'] = ur
-    l['avg_urate'] = avg_ur
-    l['urate_chg'] = ur_chg
-    l['urate_range'] = ur_range
-    l['med_income'] = get_income_data(census, z2f[zip3])
-    l['primaryCity'] = z2pc[zip3]
-    metro_hpa = metro.ix[z2c[zip3]].dropna()
-    if len(metro_hpa)>0:
-        l['HPA1Yr'] = metro_hpa['1yr'].mean()
-        l['HPA5Yr'] = metro_hpa['5yr'].mean()
-    else:
-        nonmetro_hpa = nonmetro.ix[[l['state']]]
-        l['HPA1Yr'] = nonmetro_hpa['1yr'].values[0]
-        l['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
+    def add_features_to_loan(self, loan):
+        ''' Add all the external data sources to the loan details'''
+
+        zip3 = int(loan['zip3'])
+        ur, avg_ur, ur_chg, ur_range = get_urate(self.bls, zip3)
+        loan['urate'] = ur
+        loan['avg_urate'] = avg_ur
+        loan['urate_chg'] = ur_chg
+        loan['urate_range'] = ur_range
+        loan['med_income'] = get_income_data(self.census, self.z2f[zip3])
+        loan['primaryCity'] = self.z2pc[zip3]
+        metro_hpa = self.metro.ix[self.z2c[zip3]].dropna()
+        if len(metro_hpa)>0:
+            loan['HPA1Yr'] = metro_hpa['1yr'].mean()
+            loan['HPA5Yr'] = metro_hpa['5yr'].mean()
+        else:
+            nonmetro_hpa = self.nonmetro.ix[[loan['state']]]
+            loan['HPA1Yr'] = nonmetro_hpa['1yr'].values[0]
+            loan['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
+
 
 
 
 def construct_loan_dict(grade, term, rate, amount):
     pmt = np.pmt(rate/1200., term, amount)
-    return dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
+    loan = dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
         ('loan_amount', amount), ('int_rate', rate)])
+    return loan
 
+class ReturnCalculator(object):
+    def __init__(self, default_curves, prepay_curves):
+        self.default_curves = default_curves
+        self.prepay_curves = prepay_curves  #This is not currently used
 
+    def calc_irr(self, loan, default_rate_12m, prepayment_rate_12m):
+        ''' All calculations assume a loan amount of $1.
+        Note the default curves are the cumulative percent of loans that have defaulted prior 
+        to month m; the prepayment rate is the percentage of loans that were prepaid prior to 12m.
+        We'll assume that the prepayments are in full.  In the code below, think of the calculations
+        as applying to a pool of 100 loans, with a percentage fully prepaying each month and
+        a percentage defaulting each month.'''
 
- #TODO: pass default and prepayment curves in as arguments
-default_curves = json.load(open(os.path.join(p.parent_dir, 'default_curves.json'), 'r'))
-prepay_curves = json.load(open(os.path.join(p.parent_dir, 'prepay_curves.json'), 'r'))
-def calc_npv(l, default_rate_12m, prepayment_rate_12m, discount_rate=0.10):
-    ''' All calculations assume a loan amount of $1.
-    Note the default curves are the cumulative percent of loans that have defaulted prior 
-    to month m; the prepayment rate is the percentage of loans that were prepaid prior to 12m.
-    We'll assume that the prepayments are in full.  In the code below, think of the calculations
-    as applying to a pool of 100 loans, with a percentage fully prepaying each month and
-    a percentage defaulting each month.'''
+        net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
+        income_tax_rate = 0.5
+        capital_gains_tax_rate = 0.2
 
-    net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
-    income_tax_rate = 0.5
-    capital_gains_tax_rate = 0.2
+        key = '{}{}'.format(min('G', loan['grade']), loan['term']) 
+        base_cdefaults = np.array(self.default_curves[key])
+        risk_factor = default_rate_12m / base_cdefaults[11]
+        loan['risk_factor'] = risk_factor
 
-    key = '{}{}'.format(min('G', l['grade']), l['term']) 
-    base_cdefaults = np.array(default_curves[key])
-    risk_factor = default_rate_12m / base_cdefaults[11]
-    l['risk_factor'] = risk_factor
+        # adjust only the first 15 months of default rates downward to match the model's 12-month default estimate.
+        # this is a hack; adjusting the entire curve seems obviously wrong.  E.g if we had a C default curve
+        # that was graded D, adjusting the entire D curve down based on the 12-mth ratio would underestimate defaults
+        cdefaults = np.r_[base_cdefaults[:1],np.diff(base_cdefaults)]
+        if risk_factor < 1.0:
+            cdefaults[:15] *= risk_factor
+        else:
+            cdefaults *= risk_factor
 
-    # adjust only the first 15 months of default rates downward to match the model's 12-month default estimate.
-    # this is a hack; adjusting the entire curve seems obviously wrong.  E.g if we had a C default curve
-    # that was graded D, adjusting the entire D curve down based on the 12-mth ratio would underestimate defaults
-    cdefaults = np.r_[base_cdefaults[:1],np.diff(base_cdefaults)]
-    if risk_factor < 1.0:
-        cdefaults[:15] *= risk_factor
-    else:
-        cdefaults *= risk_factor
+        cdefaults = cdefaults.cumsum()
+        eventual_default_pct = cdefaults[-1]
 
-    cdefaults = cdefaults.cumsum()
-    eventual_default_pct = cdefaults[-1]
+        max_prepayment_pct = 1 - eventual_default_pct
 
-    max_prepayment_pct = 1 - eventual_default_pct
+        # catch the case where total prepayments + total defaults > 100%  (they're estimated independently)
+        if max_prepayment_pct <= prepayment_rate_12m: 
+            return 0, 0
+  
+        #TODO: this isn't using the prepayment curves; FIX
+        # prepayment model give the odds of full prepayment in the first 12 months 
+        # here we calculate the probability of prepayment just for the loans that 
+        # won't default
+        prepayment_pool_decay_12m = (max_prepayment_pct - prepayment_rate_12m) / max_prepayment_pct
+        prepay_rate = 1.0 - prepayment_pool_decay_12m ** (1/12.0)  
 
-    # catch the case where total prepayments + total defaults > 100%  (they're estimated independently)
-    if max_prepayment_pct <= prepayment_rate_12m: 
-        return 0, 0, 0, 0
+        monthly_int_rate = loan['int_rate']/1200.
+        contract_monthly_payment = loan['monthly_payment'] / loan['loan_amount']
+        current_monthly_payment = contract_monthly_payment
 
-    # prepayment model give the odds of full prepayment in the first 12 months 
-    # here we calculate the probability of prepayment just for the loans that 
-    # won't default
-    prepayment_pool_decay_12m = (max_prepayment_pct - prepayment_rate_12m) / max_prepayment_pct
-    prepay_rate = 1.0 - prepayment_pool_decay_12m ** (1/12.0)  
-
-    monthly_int_rate = l['int_rate']/1200.
-    monthly_discount_rate = (1 + discount_rate) ** (1/12.) - 1
-    contract_monthly_payment = l['monthly_payment'] / l['loan_amount']
-    current_monthly_payment = contract_monthly_payment
-
-    # start with placeholder for time=0 investment for irr calc later
-    payments = np.zeros(l['term']+1)
-    payments_after_tax = np.zeros(l['term']+1)
-    
-    contract_principal_balance = 1.0
-    pct_loans_prepaid = 0.0
-    pct_loans_defaulted = 0.0
-    # add monthly payments
-    for m in range(1, l['term']+1):
+        # start with placeholder for time=0 investment for irr calc later
+        payments = np.zeros(loan['term']+1)
+        payments_after_tax = np.zeros(loan['term']+1)
         
-        # calculate contractually-required payments
-        contract_interest_due = contract_principal_balance * monthly_int_rate
-        contract_principal_due = min(contract_principal_balance, 
-                                     contract_monthly_payment - contract_interest_due)
+        contract_principal_balance = 1.0
+        pct_loans_prepaid = 0.0
+        pct_loans_defaulted = 0.0
+        # add monthly payments
+        for m in range(1, loan['term']+1):
+            
+            # calculate contractually-required payments
+            contract_interest_due = contract_principal_balance * monthly_int_rate
+            contract_principal_due = min(contract_principal_balance, 
+                                         contract_monthly_payment - contract_interest_due)
 
-        default_rate_this_month = cdefaults[m-1] - pct_loans_defaulted
-        pct_loans_defaulted = cdefaults[m-1]
- 
-        # account for defaults and prepayments 
-        performing_pct = (1 - pct_loans_defaulted - pct_loans_prepaid)
-        interest_received = contract_interest_due * performing_pct 
-        scheduled_principal_received = contract_principal_due * performing_pct 
-        scheduled_principal_defaulted = default_rate_this_month * contract_principal_balance
+            default_rate_this_month = cdefaults[m-1] - pct_loans_defaulted
+            pct_loans_defaulted = cdefaults[m-1]
+     
+            # account for defaults and prepayments 
+            performing_pct = (1 - pct_loans_defaulted - pct_loans_prepaid)
+            interest_received = contract_interest_due * performing_pct 
+            scheduled_principal_received = contract_principal_due * performing_pct 
+            scheduled_principal_defaulted = default_rate_this_month * contract_principal_balance
 
-        # update contractual principal remaining (i.e. assuming no prepayments or defaults) 
-        # prior to calculating prepayments
-        contract_principal_balance -= contract_principal_due
+            # update contractual principal remaining (i.e. assuming no prepayments or defaults) 
+            # prior to calculating prepayments
+            contract_principal_balance -= contract_principal_due
 
-        #prepayments are a fixed percentage of the remaining pool of non-defaulting loans
-        prepayment_pct = max(0, (max_prepayment_pct - pct_loans_prepaid)) * prepay_rate
-        prepayment_amount = contract_principal_balance * prepayment_pct 
+            #prepayments are a fixed percentage of the remaining pool of non-defaulting loans
+            prepayment_pct = max(0, (max_prepayment_pct - pct_loans_prepaid)) * prepay_rate
+            prepayment_amount = contract_principal_balance * prepayment_pct 
 
-        # account for prepayments
-        pct_loans_prepaid += prepayment_pct 
+            # account for prepayments
+            pct_loans_prepaid += prepayment_pct 
 
-        payments[m] = interest_received + scheduled_principal_received + prepayment_amount
+            payments[m] = interest_received + scheduled_principal_received + prepayment_amount
 
-        taxes = interest_received * net_payment_pct * income_tax_rate 
-        taxes = taxes - scheduled_principal_defaulted * capital_gains_tax_rate
-        payments_after_tax[m] = payments[m] - taxes 
+            taxes = interest_received * net_payment_pct * income_tax_rate 
+            taxes = taxes - scheduled_principal_defaulted * capital_gains_tax_rate
+            payments_after_tax[m] = payments[m] - taxes 
+            
+        # reduce payments by lending club service charge
+        payments *= net_payment_pct
+
+        # Add initial investment outflow at time=0 to calculate irr: 
+        payments[0] += -1
+        payments_after_tax[0] += -1
+        irr = np.irr(payments)
+        irr_after_tax = np.irr(payments_after_tax)
         
-        #print m, contract_principal_balance, payments[m], interest_received, 
-        #print scheduled_principal_received , prepayment_amount, pct_loans_prepaid, pct_loans_defaulted
+        # use same units for irr as loan interest rate
+        annualized_irr = irr * 12.0
+        annualized_irr_after_tax = irr_after_tax * 12.0
 
-    # reduce payments by lending club service charge
-    payments *= net_payment_pct
-
-    npv = np.npv(monthly_discount_rate, payments) 
-    npv_after_tax = np.npv(monthly_discount_rate, payments_after_tax)
-
-    # Add initial investment outflow at time=0 to calculate irr: 
-    payments[0] += -1
-    payments_after_tax[0] += -1
-    irr = np.irr(payments)
-    irr_after_tax = np.irr(payments_after_tax)
-    
-    # use same units for irr as loan interest rate
-    annualized_irr = irr * 12.0
-    annualized_irr_after_tax = irr_after_tax * 12.0
-
-    return annualized_irr, npv, annualized_irr_after_tax, npv_after_tax
+        return annualized_irr, annualized_irr_after_tax 
     
 
 def estimate_default_curves():

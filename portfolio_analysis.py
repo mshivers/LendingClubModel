@@ -6,10 +6,10 @@ import os
 import lclib
 import json
 import requests
+import personalized as p
 
 
 def get_notes(account='ira'):
-    import personalized as p
 
     if account == 'all':
         return get_notes('ira') + get_notes('tax')

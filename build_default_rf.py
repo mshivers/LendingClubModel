@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 import os
 import json
 from lclib import parent_dir, load_training_data, calc_log_odds, tokenize_capitalization
-from lclib import construct_loan_dict, calc_npv
+from lclib import construct_loan_dict
 
 if 'df' not in locals().keys():
     df = load_training_data()
