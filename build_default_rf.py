@@ -11,13 +11,13 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-from lclib import parent_dir, load_training_data, calc_log_odds, tokenize_capitalization
-from lclib import construct_loan_dict
+from lclib import training_data_dir, load_training_data
 
 if 'df' not in locals().keys():
     df = load_training_data()
 
 # decision variables: 
+'''
 dv = ['loan_amnt', 
       'int_rate', 
       'installment', 
@@ -88,7 +88,6 @@ dv = ['loan_amnt',
       'urate_range',
       'hpa4',
     ]
-'''
 
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
@@ -137,12 +136,12 @@ for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
     rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
     res.append([k, bottom_prob_actual, bottom_prob_mean, top_prob_mean, top_prob_actual, 
                 top_prob_mean - bottom_prob_mean, top_prob_actual - bottom_prob_actual, rate_diff])
-res = pd.DataFrame(res)
+cols = ['group', 'Decile1_actual', 'decile1_predected', 'decile10_predicted', 
+        'decile10_actual', 'predict_diff', 'actaul_diff', 'rate_diff']
+res = pd.DataFrame(res, columns=cols)
 print res
 
-
 data_str = ''
-
 forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
 data_str += '\n\nForest Importance\n'
 for v in forest_imp:
@@ -152,14 +151,20 @@ data_str += '\n\nForest Parameters\n'
 for k,v  in forest.get_params().items():
     data_str += '{}: {}\n'.format(k,v)
 
+data_str += '\n\nDefaults by Grade\n'
+data_str += out.to_string()
+
 print data_str
-fname = os.path.join(parent_dir, 'fits/forest_{}.txt'.format(dt.now().strftime('%Y_%m_%d_%H_%M_%S')))
-with open(fname,'a') as f:
+time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
+fname = os.path.join(training_data_dir, 'default_forest_{}.txt'.format(time_str))
+with open(fname,'w') as f:
     f.write(data_str)
 
+fname = os.path.join(training_data_dir, 'default_variables.txt')
+with open(fname,'w') as f:
+    f.write('\n'.join(dv))
 
 # pickle the classifier for persistence
-#joblib.dump(forest, 'test_default_risk_model_v2.pkl', compress=3)
+forest_fname = os.path.join(training_data_dir, 'default_risk_model_{}.pkl'.format(time_str))
+joblib.dump(forest, forest_fname, compress=3)
 
-#retrieve
-#forest = joblib.load('default_risk_forest.pkl')

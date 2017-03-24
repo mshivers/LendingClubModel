@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import os
 import copy
-import random_forest_model as rfm
+import production_model as model 
 import lclib
 import json
 import requests
@@ -63,51 +63,51 @@ def calc_model_sensitivities(loans):
     for loan in loans:
         loancopy = copy.deepcopy(loan)
         loancopy['clean_title_log_odds'] = 0
-        loan['dflt_ctlo_zero'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_ctlo_zero'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['capitalization_log_odds'] = 0
-        loan['dflt_caplo_zero'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_caplo_zero'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['HPA1Yr'] = -5.0 
-        loan['dflt_hpa1y_neg5pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_hpa1y_neg5pct'] = model.calc_default_risk(loancopy)        
         loancopy['HPA1Yr'] = 0 
-        loan['dflt_hpa1y_zero'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_hpa1y_zero'] = model.calc_default_risk(loancopy)        
         loancopy['HPA1Yr'] = 5.0
-        loan['dflt_hpa1y_5pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_hpa1y_5pct'] = model.calc_default_risk(loancopy)        
         loancopy['HPA1Yr'] = 10.0
-        loan['dflt_hpa1y_10pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_hpa1y_10pct'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['avg_urate'] = 0.03
         loancopy['urate'] = 0.03 
-        loan['dflt_urate_3pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_urate_3pct'] = model.calc_default_risk(loancopy)        
         loancopy['avg_urate'] = 0.08
         loancopy['urate'] = 0.08 
-        loan['dflt_urate_8pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_urate_8pct'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['urate_chg'] = 0.02
-        loan['dflt_urate_chg_2pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_urate_chg_2pct'] = model.calc_default_risk(loancopy)        
         loancopy['urate_chg'] = -0.02
-        loan['dflt_urate_chg_neg2pct'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_urate_chg_neg2pct'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['home_status_number'] = lclib.home_map['RENT']
-        loan['dflt_rent'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_rent'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['home_status_number'] = lclib.home_map['MORTGAGE']
-        loan['dflt_mortgage'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_mortgage'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['home_status_number'] = lclib.home_map['OWN']
-        loan['dflt_own'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_own'] = model.calc_default_risk(loancopy)        
 
         loancopy = copy.deepcopy(loan)
         loancopy['even_loan_amount'] = int(not loan['even_loan_amount']) 
-        loan['dflt_not_even_loan_amount'] = rfm.calc_default_risk(loancopy)        
+        loan['dflt_not_even_loan_amount'] = model.calc_default_risk(loancopy)        
 
     return
 
@@ -265,7 +265,7 @@ def main(min_irr=11, max_invest=500):
         last_search_loans = get_new_loans_REST()
         known_loans, new_ids = add_to_known_loans(known_loans, last_search_loans) 
         for id in new_ids: 
-            rfm.parse_REST_loan_details(known_loans[id])
+            model.parse_REST_loan_details(known_loans[id])
         recent_loan_amounts = [l['loanAmount'] for l in known_loans.values() 
                                if l['search_time']>dt.now()-td(minutes=60)]
         num_new_loans = len(recent_loan_amounts)
@@ -287,15 +287,15 @@ def main(min_irr=11, max_invest=500):
                 #Run risk model
                 if loan['model_run']==False:
 
-                    rfm.calc_default_risk(loan)        
-                    rfm.calc_prepayment_risk(loan)        
+                    model.calc_default_risk(loan)        
+                    model.calc_prepayment_risk(loan)        
 
                     # calc standard irr
-                    irr = rfm.IRRCalculator.calc_irr(loan, loan['default_risk'], loan['prepay_risk'])
+                    irr = model.IRRCalculator.calc_irr(loan, loan['default_risk'], loan['prepay_risk'])
                     loan['base_irr'], loan['base_irr_tax'] = irr
 
                     # calc stressed irr
-                    stress_irr = rfm.IRRCalculator.calc_irr(loan, loan['default_max'], loan['prepay_max'])
+                    stress_irr = model.IRRCalculator.calc_irr(loan, loan['default_max'], loan['prepay_max'])
                     loan['stress_irr'], loan['stress_irr_tax'] = stress_irr
 
                     lclib.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 

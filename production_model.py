@@ -10,8 +10,8 @@ from sklearn.externals import joblib
 import lclib
 import personalized as p
 
-model_hash = 'YMHVDZ'
-model_path = os.path.join(p.parent_dir, model_hash)
+model_dir_name = 'YMHVDZ'
+model_path = os.path.join(p.parent_dir, model_dir_name)
 
 default_model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')
 default_model = joblib.load(default_model_file) 
@@ -29,17 +29,13 @@ prod_clean_title_map = json.load(open(os.path.join(model_path, 'clean_title_rank
 prod_clean_title_map = defaultdict(lambda :1e9, prod_clean_title_map )
 
 caplo_dict = json.load(open(os.path.join(model_path, 'caplo.json'),'r'))
-caplo_dict = defaultdict(lambda :0, caplo_dict)
-#Note the input x is already in '^{}$' format
-cap_title_odds = lambda x: lclib.calc_log_odds(x, caplo_dict, 4)
-        
+CapitalizationDefault = lclib.LogOddsCalculator(caplo_dict)
+
 ctlo_dict =json.load(open(os.path.join(model_path, 'ctlo.json'),'r'))
-ctlo_dict = defaultdict(lambda :0, ctlo_dict)
-clean_title_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), ctlo_dict, 4)
+TitleDefault = lclib.LogOddsCalculator(ctlo_dict)
 
 pctlo_dict = json.load(open(os.path.join(model_path, 'pctlo.json'),'r'))
-pctlo_dict = defaultdict(lambda :0, pctlo_dict)
-pctlo_odds = lambda x: lclib.calc_log_odds('^{}$'.format(x), pctlo_dict, 4)
+TitlePrepay = lclib.LogOddsCalculator(pctlo_dict)
 
 def parse_REST_loan_details(loan):
     try:
@@ -56,11 +52,13 @@ def parse_REST_loan_details(loan):
         loan['capitalization_title'] = lclib.tokenize_capitalization(loan['emp_title'])
         loan['clean_title'] = lclib.clean_title(loan['emp_title'])
         loan['clean_short_title'] = loan['clean_title'][:4]
-
+        
         loan['clean_title_rank'] = prod_clean_title_map[loan['clean_title']]
-        loan['capitalization_log_odds'] = cap_title_odds(loan['capitalization_title'])
-        loan['clean_title_log_odds'] = clean_title_odds(loan['clean_title'])
-        loan['pctlo'] = pctlo_odds(loan['clean_title'])
+        loan['capitalization_log_odds'] = CapitalizationDefault.calc_log_odds(loan['capitalization_title'])
+
+        tokenized_clean_title = '^{}$'.format(loan['clean_title'])
+        loan['clean_title_log_odds'] = TitleDefault.calc_log_odds(tokenized_clean_title)
+        loan['pctlo'] = TitlePrepay.calc_log_odds(tokenized_clean_title)
 
         loan['int_rate'] = float(loan['intRate'])
         loan['loan_amount'] = float(loan['loanAmount'])
@@ -167,36 +165,11 @@ def calc_model_input_field(loan, field):
         return np.nan
 
 
+default_dv = open(os.path.join(model_path, 'default_variables.txt')).read().split()
 def calc_default_risk(loan):
     try:
         # decision variables: 
-        dv = ['loan_amnt', 
-              'installment', 
-              'sub_grade', 
-              'purpose', 
-              'emp_length', 
-              'home_ownership', 
-              'annual_inc', 
-              'dti',
-              'revol_util', 
-              'total_acc', 
-              'credit_length',
-              'even_loan_amnt', 
-              'revol_bal-loan', 
-              'urate',
-              'pct_med_inc', 
-              'clean_title_rank', 
-              'ctloC',
-              'caploC', 
-              'pymt_pct_inc', 
-              'int_pct_inc', 
-              'revol_bal_pct_inc',
-              'avg_urate',
-              'urate_chg', 
-              'urate_range',
-              'hpa4',
-            ]
-
+        dv = default_dv
         x = np.zeros(len(dv)) * np.nan
         for i, fld in enumerate(dv):
             x[i] = calc_model_input_field(loan, fld)
@@ -224,34 +197,10 @@ def calc_default_risk(loan):
 
 
 
+prepay_dv = open(os.path.join(model_path, 'prepay_variables.txt')).read().split()
 def calc_prepayment_risk(loan):
     # decision variables: 
-    dv = [
-          'loan_amnt', 
-          'int_rate', 
-          'installment', 
-          'term',
-          'sub_grade', 
-          'purpose', 
-          'home_ownership', 
-          'dti',
-          'inq_last_6mths', 
-          'mths_since_last_delinq', 
-          'revol_util', 
-          'total_acc', 
-          'credit_length',
-          'even_loan_amnt', 
-          'revol_bal-loan', 
-          'pctlo',
-          'pymt_pct_inc', 
-          'int_pct_inc', 
-          'revol_bal_pct_inc',
-          'urate_chg', 
-          'hpa4',
-          'fico_range_low',
-          'loan_pct_income',
-        ]
-
+    dv = prepay_dv
     try:
         x = np.zeros(len(dv)) * np.nan
         for i, fld in enumerate(dv):

@@ -791,6 +791,18 @@ class ExternalDataManager(object):
             loan['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
 
 
+class LogOddsCalculator(object):
+    def __init__(self, log_odds_dict):
+        self.log_odds_dict = defaultdict(lambda :0, log_odds_dict)
+
+    def calc_log_odds(self, x):
+        tok_len = 4
+        if len(x)==0:
+            return 0
+        toks = np.unique([x[i:i+tok_len] for i in range(max(1,len(x)-tok_len+1))])
+        log_odds = np.sum(map(lambda x:self.log_odds_dict[x], toks))
+        return log_odds
+ 
 
 
 def construct_loan_dict(grade, term, rate, amount):
