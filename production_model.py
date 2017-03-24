@@ -10,10 +10,11 @@ from sklearn.externals import joblib
 import lclib
 import personalized as p
 
-model_dir_name = 'YMHVDZ'
+#model_dir_name = 'YMHVDZ'
+model_dir_name = 'Model20170324'
 model_path = os.path.join(p.parent_dir, model_dir_name)
 
-default_model_file = os.path.join(model_path, 'prod_default_risk_model.pkl')
+default_model_file = os.path.join(model_path, 'default_risk_model.pkl')
 default_model = joblib.load(default_model_file) 
 default_model.verbose=0
 
@@ -129,8 +130,14 @@ def calc_model_input_field(loan, field):
         'credit_length',
         'pctlo',
         'urate_chg', 
-        'loan_pct_income'
-        ]
+        'loan_pct_income',
+        'delinq_2yrs', 
+        'mths_since_last_record',
+        'mths_since_last_major_derog',
+        'open_acc',
+        'pub_rec',
+        'revol_bal'
+      ]
     if field in unchanged_fields:
         return loan[field]
 
@@ -147,7 +154,10 @@ def calc_model_input_field(loan, field):
         'caploC': 'capitalization_log_odds', 
         'hpa4': 'HPA1Yr',
         'mths_since_last_delinq': 'delinq_2yrs',
-        'fico_range_low': 'fico_score'
+        'fico_range_low': 'fico_score',
+        'verification_status': 'is_inc_verified',
+        'int_pymt': 'monthly_int_payment',
+        'med_inc': 'med_income'
         }
     if field in renamed_fields.keys():
         return loan[renamed_fields[field]]
@@ -161,7 +171,12 @@ def calc_model_input_field(loan, field):
         return loan['revol_bal'] / loan['annual_income'] 
     elif field=='pct_med_inc':
         return loan['annual_income'] / loan['med_income']
+    elif field=='cur_bal-loan_amnt':
+        return loan['totCurBal'] - loan['loan_amount'] 
+    elif field=='cur_bal_pct_loan_amnt':
+        return loan['totCurBal'] / loan['loan_amount'] 
     else:
+        print 'Field {} not found'.format(field)
         return np.nan
 
 

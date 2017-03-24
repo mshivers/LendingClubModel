@@ -3,64 +3,6 @@
 
 
 
-
-# decision variables: 
-dv_default = ['loan_amnt', 
-      'installment', 
-      'sub_grade', 
-      'purpose', 
-      'emp_length', 
-      'home_ownership', 
-      'annual_inc', 
-      'dti',
-      'revol_util', 
-      'total_acc', 
-      'credit_length',
-      'even_loan_amnt', 
-      'revol_bal-loan', 
-      'urate',
-      'pct_med_inc', 
-      'clean_title_rank', 
-      'ctloC',
-      'caploC', 
-      'pymt_pct_inc', 
-      'int_pct_inc', 
-      'revol_bal_pct_inc',
-      'avg_urate',
-      'urate_chg', 
-      'urate_range',
-      'hpa4',
-    ]
-
-
-
-dv_prepay = [
-      'loan_amnt', 
-      'int_rate', 
-      'installment', 
-      'term',
-      'sub_grade', 
-      'purpose', 
-      'home_ownership', 
-      'dti',
-      'inq_last_6mths', 
-      'mths_since_last_delinq', 
-      'revol_util', 
-      'total_acc', 
-      'credit_length',
-      'even_loan_amnt', 
-      'revol_bal-loan', 
-      'pctlo',
-      'pymt_pct_inc', 
-      'int_pct_inc', 
-      'revol_bal_pct_inc',
-      'urate_chg', 
-      'hpa4',
-      'fico_range_low',
-      'loan_pct_income',
-    ]
-
-
 '''
 all_grades = list('ABCDEFG')
 

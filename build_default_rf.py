@@ -17,7 +17,6 @@ if 'df' not in locals().keys():
     df = load_training_data()
 
 # decision variables: 
-'''
 dv = ['loan_amnt', 
       'int_rate', 
       'installment', 
@@ -88,7 +87,7 @@ dv = ['loan_amnt',
       'urate_range',
       'hpa4',
     ]
-
+'''
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
                 if tmp not in dv]
@@ -107,10 +106,10 @@ x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
 test_int_rate = fit_data.ix[~fit_data.in_sample, 'int_rate'].values
 test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 
+
 forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
-print sorted(zip(dv,forest.feature_importances_), key=lambda x: x[1])
 
 pf = forest.predict(x_test)
 predictions = [tree.predict(x_test) for tree in forest.estimators_]
@@ -120,7 +119,7 @@ test_data = fit_data.ix[~fit_data.in_sample]
 test_data['default_prob'] = pf
 test_data['default_prob_65'] = np.percentile(predictions, 65, axis=1)
   
-res = list()
+res_data = list()
 grp = test_data.groupby(['grade', 'term'])
 default_fld = 'default_prob_65'
 for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
@@ -129,16 +128,17 @@ for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
     pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
     bottom = grp_predict<=pctl10
     top = grp_predict>=pctl90
-    bottom_prob_mean = 100*sample.ix[bottom, iv].mean()
-    bottom_prob_actual = 100*grp_predict[bottom].mean()
-    top_prob_mean = 100*sample.ix[top, iv].mean() 
-    top_prob_actual = 100*grp_predict[top].mean()
+    bottom_default_mean = 100*sample.ix[bottom, iv].mean()
+    bottom_predict_mean = 100*grp_predict[bottom].mean()
+    top_default_mean = 100*sample.ix[top, iv].mean() 
+    top_predict_mean = 100*grp_predict[top].mean()
     rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
-    res.append([k, bottom_prob_actual, bottom_prob_mean, top_prob_mean, top_prob_actual, 
-                top_prob_mean - bottom_prob_mean, top_prob_actual - bottom_prob_actual, rate_diff])
-cols = ['group', 'Decile1_actual', 'decile1_predected', 'decile10_predicted', 
-        'decile10_actual', 'predict_diff', 'actaul_diff', 'rate_diff']
-res = pd.DataFrame(res, columns=cols)
+    res_data.append([k, len(sample), bottom_default_mean, top_default_mean, 
+                     bottom_predict_mean, top_predict_mean, rate_diff])
+cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted', 
+        'rate_diff']
+res = pd.DataFrame(res_data, columns=cols)
+res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
 print res
 
 data_str = ''
@@ -152,7 +152,7 @@ for k,v  in forest.get_params().items():
     data_str += '{}: {}\n'.format(k,v)
 
 data_str += '\n\nDefaults by Grade\n'
-data_str += out.to_string()
+data_str += res.to_string()
 
 print data_str
 time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')

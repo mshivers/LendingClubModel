@@ -269,16 +269,16 @@ def cache_training_data():
 
     # process job title features
     sample = (df.grade>=2) & (df.in_sample)
-    ctloC_dict = fast_create_log_odds(df.ix[sample], string_fld='clean_title')
-    json.dump(ctloC_dict, open(os.path.join(training_data_dir, 'ctloC.json'),'w'))
-    ctloC = defaultdict(lambda :0, ctloC_dict)
-    odds_map = lambda x: calc_log_odds('^{}$'.format(x), ctloC, 4)
+    ctlo_dict = fast_create_log_odds(df.ix[sample], string_fld='clean_title')
+    json.dump(ctlo_dict, open(os.path.join(training_data_dir, 'ctlo.json'),'w'))
+    ctlo = defaultdict(lambda :0, ctlo_dict)
+    odds_map = lambda x: calc_log_odds('^{}$'.format(x), ctlo, 4)
     df['ctloC'] = df['clean_title'].apply(odds_map)
 
-    caploC_dict = fast_create_log_odds(df.ix[sample], string_fld='title_capitalization')
-    json.dump(caploC_dict, open(os.path.join(training_data_dir, 'caploC.json'),'w'))
-    caploC = defaultdict(lambda :0, caploC_dict)
-    odds_map = lambda x: calc_log_odds(x, caploC, 4) #Note title_capitalization already is in '^{}$' format
+    caplo_dict = fast_create_log_odds(df.ix[sample], string_fld='title_capitalization')
+    json.dump(caplo_dict, open(os.path.join(training_data_dir, 'caplo.json'),'w'))
+    caplo = defaultdict(lambda :0, caplo_dict)
+    odds_map = lambda x: calc_log_odds(x, caplo, 4) #Note title_capitalization already is in '^{}$' format
     df['caploC'] = df['title_capitalization'].apply(odds_map)
 
     sample = (df.in_sample)
