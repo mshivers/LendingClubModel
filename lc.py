@@ -16,6 +16,78 @@ import personalized as p
 log = open(os.path.join(p.parent_dir, 'logfile.txt'), 'a')
 
 
+class Loan(object):
+    def __init__(self, api_data):
+        self.search_time = dt.now()
+        self.api_data = api_data
+        self.model_inputs = dict()
+        self.model_outputs = dict()
+        self.invested = {
+                        'max_stage_amount': 0,
+                        'staged_amount': 0
+                        }
+        self.flags = {
+                      'inputs_parsed': False,
+                      'api_details_parsed': False,
+                      'model_run': False,
+                      'details_saved': False,
+                      'email_details': False
+                      }
+
+    def _validate(self):
+        '''verify that the api data is complete'''
+
+        loan['currentCompany'] = '' #currentCompany data not exposed via API
+        if loan['empTitle']==None: loan['empTitle'] = 'n/a'
+        if loan['mthsSinceLastDelinq']==None: loan['mthsSinceLastDelinq'] = lclib.LARGE_INT
+        if loan['mthsSinceLastMajorDerog']==None: loan['mthsSinceLastMajorDerog'] = lclib.LARGE_INT
+        if loan['mthsSinceLastRecord']==None: loan['mthsSinceLastRecord'] = lclib.LARGE_INT
+        if loan['empLength']==None: loan['empLength'] = 0 
+        loan['empTitle'] = lclib.only_ascii(loan['empTitle']).replace('|', '/')  #for saving the data
+        loan['currentJobTitle'] = loan['empTitle'].strip()
+        
+        loan['emp_title'] = loan['currentJobTitle'].replace('n/a','Blank')
+
+        loan['int_rate'] = float(loan['intRate'])
+        loan['loan_amount'] = float(loan['loanAmount'])
+        loan['annual_income'] = float(loan['annualInc'])
+        loan['monthly_payment'] = float(loan['installment'])
+        loan['revol_bal'] = float(loan['revolBal'])
+        loan['loan_term'] = float(loan['term'])
+        loan['dti'] = float(loan['dti'])
+        loan['delinq_2yrs'] = float(loan['delinq2Yrs'])
+        loan['fico_score'] = float(loan['ficoRangeLow'])
+        loan['zip3'] = float(loan['addrZip'][:3])
+        loan['state'] = loan['addrState']
+        loan['inq_last_6mths'] = float(loan['inqLast6Mths'])
+        
+        loan['mths_since_last_major_derog'] = float(loan['mthsSinceLastMajorDerog'])
+        loan['mths_since_last_delinq'] = float(loan['mthsSinceLastDelinq'])
+        loan['mths_since_last_record'] = float(loan['mthsSinceLastRecord'])
+        loan['open_acc'] = float(loan['openAcc'])
+        loan['pub_rec'] = float(loan['pubRec'])
+        loan['revol_util'] = float(loan['revolUtil'])
+        loan['total_acc'] = float(loan['totalAcc'])
+        loan['is_inc_verified'] = lclib.api_verification_dict[loan['isIncV']]
+
+        loan['subgrade_number'] = lclib.subgrade_map[loan['subGrade']]
+        loan['purpose_number'] = lclib.purpose_mapping(loan['purpose'])
+        loan['emp_length'] = loan['empLength']/12.0
+        loan['home_status_number'] = lclib.home_map[loan['homeOwnership'].upper()]
+
+
+        loan['api_details_parsed'] = True
+
+
+
+class Inventory(object):
+    def __init__(self):
+        self.loans = list()
+
+
+
+
+
 def stage_order_fast(lc, id, amount):
     # Stage each loan
     amount_staged = 0
@@ -247,7 +319,7 @@ def login(lc_ira, lc_tax):
 lc_ira = LendingClub()
 lc_tax = LendingClub()
 
-def main(min_irr=11, max_invest=500):
+def main(min_irr=8, max_invest=500):
     init_dt = dt.now() 
     known_loans = dict()
 
@@ -258,7 +330,7 @@ def main(min_irr=11, max_invest=500):
     cash_update = dt.now()
     print 'IRA cash balance is ${}'.format(cash_ira)
     print 'Tax cash balance is ${}'.format(cash_tax)
-    ExternalData = lclib.ExternalDataManager()
+    location_data = lclib.LocationDataManager()
 
     while True:
         print '\n{}: Checking for new loans'.format(dt.now())
@@ -280,7 +352,7 @@ def main(min_irr=11, max_invest=500):
 
             #Parse inputs and add features
             if loan['inputs_parsed']==False:
-                ExternalData.add_features_to_loan(loan)
+                location_data.get_zip_features(loan['zip3'])
                 loan['inputs_parsed'] = True
             
             if loan['inputs_parsed']==True: 
@@ -341,7 +413,7 @@ def main(min_irr=11, max_invest=500):
             print '{} total loans found, valued at ${:1,.0f}.'.format(num_new_loans, value_new_loans)
 
             print '\n\nRejected Loan Employers:'
-            get_employer_data(lc_tax, known_loans)
+            #get_employer_data(lc_tax, known_loans)
             loans_to_save = get_loans_to_save(known_loans) 
             if len(loans_to_save)>0:
                 lclib.save_loan_info(loans_to_save)
@@ -360,10 +432,19 @@ def main(min_irr=11, max_invest=500):
                 except:
                     print '{}: Failed to get cash balance'.format(dt.now()) 
                 lclib.reset_time()
-            print '{}: Processed all loans... sleeping for {} seconds'.format(dt.now(), sleep_seconds)
         else:
             sleep_seconds = 0
+            sleep_str = 'No sleeping!'
 
+        '''
+        if sleep_seconds > 300:
+            sleep_seconds = min(600, sleep_seconds)
+            import get_employer_data as ged
+            ged.update()
+        '''
+
+        sleep_str = '\n{}: Processed all loans... sleeping for {} minutes'.format(dt.now(), sleep_seconds/60.0)
+        print sleep_str
         sleep(sleep_seconds)
 
 

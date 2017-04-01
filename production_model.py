@@ -24,7 +24,7 @@ prepayment_model.verbose=0
 
 default_curves = json.load(open(os.path.join(model_path, 'default_curves.json'), 'r'))
 prepay_curves = json.load(open(os.path.join(model_path, 'prepay_curves.json'), 'r'))
-IRRCalculator = lclib.ReturnCalculator(default_curves, prepay_curves)
+irr_calculator = lclib.ReturnCalculator(default_curves, prepay_curves)
 
 prod_clean_title_map = json.load(open(os.path.join(model_path, 'clean_title_rank_map.json'),'r'))
 prod_clean_title_map = defaultdict(lambda :1e9, prod_clean_title_map )

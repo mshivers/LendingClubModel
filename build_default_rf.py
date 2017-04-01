@@ -11,87 +11,102 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-from lclib import training_data_dir, load_training_data
+from lclib import training_data_dir, reference_data_dir, load_training_data, LARGE_INT
 
 if 'df' not in locals().keys():
     df = load_training_data()
 
 # decision variables: 
-dv = ['loan_amnt', 
-      'int_rate', 
-      'installment', 
-      'term',
-      'sub_grade', 
-      'purpose', 
-      'emp_length', 
-      'home_ownership', 
-      'annual_inc', 
-      'dti',
-      'delinq_2yrs', 
-      'inq_last_6mths', 
-      'mths_since_last_delinq', 
-      'mths_since_last_record', 
-      'mths_since_last_major_derog',
-      'open_acc', 
-      'pub_rec', 
-      'revol_bal', 
-      'revol_util', 
-      'total_acc', 
-      'verification_status',
-      'int_pymt', 
-      'credit_length',
-      'even_loan_amnt', 
-      'revol_bal-loan', 
-      'urate',
-      'pct_med_inc', 
-      'clean_title_rank', 
-      'ctloC',
-      'caploC', 
-      'pymt_pct_inc', 
-      'int_pct_inc', 
-      'revol_bal_pct_inc',
-      #'zip_code',
-      'avg_urate',
-      'urate_chg', 
-      'urate_range',
-      'med_inc', 
-      'hpa4',
-      'fico_range_low',
-      'cur_bal-loan_amnt',
-      'cur_bal_pct_loan_amnt'
-    ]
-'''
-dv = ['loan_amnt', 
-      'installment', 
-      'sub_grade', 
-      'purpose', 
-      'emp_length', 
-      'home_ownership', 
-      'annual_inc', 
-      'dti',
-      'revol_util', 
-      'total_acc', 
-      'credit_length',
-      'even_loan_amnt', 
-      'revol_bal-loan', 
-      'urate',
-      'pct_med_inc', 
-      'clean_title_rank', 
-      'ctloC',
-      'caploC', 
-      'pymt_pct_inc', 
-      'int_pct_inc', 
-      'revol_bal_pct_inc',
-      'avg_urate',
-      'urate_chg', 
-      'urate_range',
-      'hpa4',
-    ]
-'''
-iv = '12m_wgt_default'
-extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
-                if tmp not in dv]
 
+dv = [
+     'accOpenPast24Mths',
+     'annualInc',
+     'avgCurBal',
+     'avg_urate',
+     'bcOpenToBuy',
+     'bcUtil',
+     'caploC',
+     'clean_title_rank',
+     'credit_length',
+     'ctloC',
+     'cur_bal-loan_amnt',
+     'cur_bal_pct_loan_amnt',
+     'dti',
+     'empLength',
+     'even_loan_amnt',
+     'ficoRangeLow',
+     'homeOwnership',
+     'hpa4',
+     'initialListStatus',
+     'inqLast6Mths',
+     'installment',
+     'intRate',
+     'int_pct_inc',
+     'int_pymt',
+     'loanAmount',
+     'loan_pct_income',
+     'max_urate',
+     'med_inc',
+     'min_urate',
+     'moSinOldIlAcct',
+     'moSinOldRevTlOp',
+     'moSinRcntRevTlOp',
+     'moSinRcntTl',
+     'mortAcc',
+     'mort_bal',
+     'mort_pct_credit_limit',
+     'mort_pct_cur_bal',
+     'mthsSinceLastMajorDerog',
+     'mthsSinceLastRecord',
+     'mthsSinceRecentBc',
+     'mthsSinceRecentInq',
+     'mthsSinceRecentRevolDelinq',
+     'numActvBcTl',
+     'numActvRevTl',
+     'numBcSats',
+     'numBcTl',
+     'numIlTl',
+     'numOpRevTl',
+     'numRevAccts',
+     'numRevTlBalGt0',
+     'numSats',
+     'numTlOpPast12m',
+     'pctTlNvrDlq',
+     'pct_med_inc',
+     'pctlo',
+     'percentBcGt75',
+     'pubRecBankruptcies',
+     'purpose',
+     'pymt_pct_inc',
+     'revolBal',
+     'revolUtil',
+     'revol_bal-loan',
+     'revol_bal_pct_cur_bal',
+     'revol_bal_pct_inc',
+     'subGrade',
+     'term',
+     'totCollAmt',
+     'totCurBal',
+     'totHiCredLim',
+     'totalAcc',
+     'totalBalExMort',
+     'totalBcLimit',
+     'totalIlHighCreditLimit',
+     'totalRevHiLim',
+     'urate',
+     'urate_chg',
+     'urate_range',
+     ]
+
+#df['mthsSinceRecentRevolDelinq'] = df['mthsSinceRecentRevolDelinq'].fillna(LARGE_INT)
+#df['mthsSinceRecentInq'] = df['mthsSinceRecentInq'].fillna(LARGE_INT)
+#df['numTl120dpd2m'] = df['numTl120dpd2m'].fillna(0)
+#df['moSinOldIlAcct'] = df['moSinOldIlAcct'].fillna(0)
+
+
+iv = '12m_wgt_default'
+extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
+                if tmp not in dv]
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
 
@@ -103,11 +118,12 @@ x_train = fit_data.ix[fit_data.in_sample,:][dv].values
 y_train = fit_data.ix[fit_data.in_sample,:][iv].values
 y_test = fit_data.ix[~fit_data.in_sample,:][iv].values
 x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
-test_int_rate = fit_data.ix[~fit_data.in_sample, 'int_rate'].values
+test_int_rate = fit_data.ix[~fit_data.in_sample, 'intRate'].values
 test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 
 
-forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
+forest = RandomForestRegressor(n_estimators=400, max_depth=None, min_samples_leaf=100, 
+                               verbose=2, n_jobs=8, oob_score=True, max_features=0.5)
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
 
@@ -132,7 +148,7 @@ for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
     bottom_predict_mean = 100*grp_predict[bottom].mean()
     top_default_mean = 100*sample.ix[top, iv].mean() 
     top_predict_mean = 100*grp_predict[top].mean()
-    rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
+    rate_diff = sample.ix[bottom, 'intRate'].mean() - sample.ix[top, 'intRate'].mean()
     res_data.append([k, len(sample), bottom_default_mean, top_default_mean, 
                      bottom_predict_mean, top_predict_mean, rate_diff])
 cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted', 
@@ -154,7 +170,10 @@ for k,v  in forest.get_params().items():
 data_str += '\n\nDefaults by Grade\n'
 data_str += res.to_string()
 
+data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
+
 print data_str
+
 time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
 fname = os.path.join(training_data_dir, 'default_forest_{}.txt'.format(time_str))
 with open(fname,'w') as f:

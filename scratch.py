@@ -1,9 +1,59 @@
-#Notes:
-#    1. use 'Blank' instead of 'blank' so it doesn't get lumped in with lower case feature
 
 
+#test_data = fit_data.ix[~fit_data.in_sample] 
+#predictions = [tree.predict(x_test) for tree in forest.estimators_]
+#predictions = np.vstack(predictions).T  #loans X trees
+N = len(forest.estimators_)
+score_data = list()
+incr = 50
+for num_trees in range(incr, N+1, incr):
+
+    test_data['default_prob'] = np.percentile(predictions[:, :num_trees], 64, axis=1)
+      
+    res_data = list()
+    grp = test_data.groupby(['grade', 'term'])
+    default_fld = 'default_prob'
+    for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
+        sample = grp.get_group(k)
+        grp_predict = sample[default_fld]
+        pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
+        bottom = grp_predict<=pctl10
+        top = grp_predict>=pctl90
+        bottom_default_mean = 100*sample.ix[bottom, iv].mean()
+        bottom_predict_mean = 100*grp_predict[bottom].mean()
+        top_default_mean = 100*sample.ix[top, iv].mean() 
+        top_predict_mean = 100*grp_predict[top].mean()
+        rate_diff = sample.ix[bottom, 'intRate'].mean() - sample.ix[top, 'intRate'].mean()
+        res_data.append([k, len(sample), bottom_default_mean, top_default_mean, 
+                         bottom_predict_mean, top_predict_mean, rate_diff])
+    cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted', 
+            'rate_diff']
+    res = pd.DataFrame(res_data, columns=cols)
+    res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
+    score = (res['NObs'] * res['decile1_error']).sum() / res['NObs'].sum()
+    abs_score = (res['NObs'] * res['decile1_error']).abs().sum() / res['NObs'].sum()
+    score_data.append((num_trees, score, abs_score))
+    print '{}, {:1.2f}, {:1.2f}'.format(num_trees, score, abs_score)
+    print res
+    print '\n\n\n'
+scores = pd.DataFrame(score_data, columns=['num_trees', 'score', 'score_abs']).set_index('num_trees')
+plt.figure()
+scores['score_abs'].plot()
+plt.ylim(0,plt.ylim()[1])
+plt.show()
 
 '''
+for k1,v1 in api_mid.items():
+    for k2,v2 in hist_mid.items():
+        try: 
+            if str(v1)==str(v2):
+                print k1, k2
+            elif float(v1)==float(v2):
+                print k1, k2
+        except:
+            pass
+
+
 all_grades = list('ABCDEFG')
 
 out = list()

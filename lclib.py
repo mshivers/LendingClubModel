@@ -23,7 +23,7 @@ bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
 fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
 saved_prod_data_dir = os.path.join(p.parent_dir, 'data/saved_prod_data')
 
-payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170215.csv')
+payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170315.csv')
 cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
 
 update_hrs = [1,5,9,13,17,21]
@@ -58,7 +58,7 @@ subgrades = ['{}{}'.format(l,n) for l in 'ABCDEFG' for n in range(1,6)]
 subgrade_map = defaultdict(lambda :np.nan, zip(subgrades, range(len(subgrades))))
 
 # Must be set to 1 iff True; LC api only give true/false
-verification_dict = dict([('Verified',2), ('Source Verified',1), ('Not Verified',0)]) 
+loanstats_verification_dict = dict([('Verified',2), ('Source Verified',1), ('Not Verified',0)]) 
 api_verification_dict = dict([('VERIFIED',2), ('SOURCE_VERIFIED',1), ('NOT_VERIFIED',0)])
 
 init_status_dict = dict([('f',0), ('w',1)])
@@ -106,70 +106,88 @@ def load_training_data(regen=False):
 
     return df
 
+def get_loanstats2api_map():
+    col_name_file = open(os.path.join(reference_data_dir, 'loanstats2api.txt'), 'r')
+    col_name_map = dict([line.strip().split(',') for line in col_name_file.readlines()])
+    return col_name_map
+
 def cache_training_data():
+
+    #rename columns to match API fields
+    col_name_map = get_loanstats2api_map()
+
+    def clean_raw_data(df):
+        df = df.rename(columns=col_name_map)
+
+        idx1 = ~(df[['last_pymnt_d', 'issue_d', 'annualInc']].isnull()).any(1)
+        idx2 = df['empTitle'].apply(lambda x:max(ord(c) for c in str(x))<128)
+        df = df.ix[idx1&idx2].copy()
+        
+        df['issue_d'] = df['issue_d'].apply(lambda x: dt.strptime(x, '%b-%Y'))
+        idx3 = df['issue_d']>=np.datetime64('2013-10-01')
+        idx4 = df['issue_d'] <= dt.now() - td(days=366)
+        df = df.ix[idx3&idx4].copy()
+
+        df['id'] = df['id'].astype(int)
+        return df
 
     fname = os.path.join(loanstats_dir, 'LoanStats3{}_securev1.csv')
     fname2 = os.path.join(loanstats_dir, 'LoanStats_securev1_{}.csv')
-    d1 = pd.read_csv(fname.format('a'), header=1, nrows=39786)
-    d2 = pd.read_csv(fname.format('b'), header=1)
-    d3 = pd.read_csv(fname.format('c'), header=1)
-    d4 = pd.read_csv(fname.format('d'), header=1)
-    d5 = pd.read_csv(fname2.format('2016Q1'), header=1)
-    d6 = pd.read_csv(fname2.format('2016Q2'), header=1)
-    d7 = pd.read_csv(fname2.format('2016Q3'), header=1)
-    df = pd.concat((d1,d2,d3,d4,d5,d6,d7), ignore_index=True)
-
-    # take subset of good data
-    idx1 = ~(df[['last_pymnt_d', 'issue_d', 'annual_inc']].isnull()).any(1)
-
-    # only keep titles in ascii
-    idx2 = df['emp_title'].apply(lambda x:max(ord(c) for c in str(x))<128)
-    df = df.ix[idx1&idx2]
-    
-    # use only data after emp_title switched from company name
-    df['issue_d'] = df['issue_d'].apply(lambda x: dt.strptime(x, '%b-%Y'))
-    idx3 = df['issue_d']>=np.datetime64('2013-10-01')
-
-    # only use data for loans that were originated at least 1 year ago
-    idx4 = df['issue_d'] <= dt.now() - td(days=366)
-    
-    df = df.ix[idx3&idx4].copy()
-
-    df['id'] = df['id'].astype(int)
-
-    # clean dataframe
+    dataframes = list()
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('a'), header=1, nrows=39786)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('b'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('c'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('d'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q1'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q2'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q3'), header=1)))
+    df = pd.concat(dataframes, ignore_index=True)
+    print 'Dataframes imported'
+ 
+     # clean dataframe
     cvt = dict()
     cvt['term'] = lambda x: int(x.strip().split(' ')[0])
-    cvt['int_rate'] = lambda x: float(x[:-1])
-    cvt['zip_code'] = lambda x: float(x[:3])
-    cvt['revol_util'] = lambda x: np.nan if '%' not in str(x) else min(100,round(float(x[:-1]),0))
-    cvt['revol_bal'] = lambda x: round(x,-2)
+    cvt['intRate'] = lambda x: float(x[:-1])
+    cvt['addrZip'] = lambda x: float(x[:3])
+    cvt['revolUtil'] = lambda x: np.nan if '%' not in str(x) else min(100,round(float(x[:-1]),0))
+    cvt['revolBal'] = lambda x: round(x,-2)
     cvt['dti'] = lambda x: round(x,0)
     cvt['grade'] = lambda x: 'ABCDEFG'.index(str(x))
     cvt['last_pymnt_d'] = lambda x: dt.strptime(x, '%b-%Y')
-    cvt['earliest_cr_line'] = lambda x: dt.strptime(x, '%b-%Y')
-    cvt['home_ownership'] = lambda x: home_map[x]
+    cvt['earliestCrLine'] = lambda x: dt.strptime(x, '%b-%Y')
+    cvt['homeOwnership'] = lambda x: home_map[x]
     cvt['purpose'] = lambda x: purpose_mapping(x)
-    cvt['sub_grade'] = lambda x: subgrade_map[x]
-    cvt['emp_length'] = lambda x: employment_length_map(x)
-    cvt['verification_status'] = lambda x: verification_dict[x]
+    cvt['subGrade'] = lambda x: subgrade_map[x]
+    cvt['empLength'] = lambda x: employment_length_map(x)
+    cvt['isIncV'] = lambda x: loanstats_verification_dict[x]
     cvt['desc'] = lambda x: float(len(str(x)) > 3)
-    cvt['initial_list_status'] = lambda x: init_status_dict[x] 
+    cvt['initialListStatus'] = lambda x: init_status_dict[x] 
 
     for col in [c for c in df.columns if c in cvt.keys()]:
         df[col] = df[col].apply(cvt[col])
    
-    df['mths_since_last_record'] = df['mths_since_last_record'].fillna(LARGE_INT)
-    df['mths_since_last_delinq'] = df['mths_since_last_delinq'].fillna(LARGE_INT)
-    df['mths_since_last_major_derog'] = df['mths_since_last_major_derog'].fillna(LARGE_INT)
+    df['mthsSinceLastRecord'] = df['mthsSinceLastRecord'].fillna(LARGE_INT)
+    df['mthsSinceLastDelinq'] = df['mthsSinceLastDelinq'].fillna(LARGE_INT)
+    df['mthsSinceLastMajorDerog'] = df['mthsSinceLastMajorDerog'].fillna(LARGE_INT)
+    df['mthsSinceRecentBcDlq'] = df['mthsSinceRecentBcDlq'].fillna(LARGE_INT)
+    df['mthsSinceRecentRevolDelinq'] = df['mthsSinceRecentRevolDelinq'].fillna(LARGE_INT)
+    df['mthsSinceRecentInq'] = df['mthsSinceRecentInq'].fillna(LARGE_INT)
+    df['mthsSinceRecentBc'] = df['mthsSinceRecentBc'].fillna(LARGE_INT)
+    df['numTl120dpd2m'] = df['numTl120dpd2m'].fillna(0)
+    df['moSinOldIlAcct'] = df['moSinOldIlAcct'].fillna(0)
+    df['percentBcGt75'] = df['percentBcGt75'].fillna(0)
+    df['bcOpenToBuy'] = df['bcOpenToBuy'].fillna(0)
+    df['bcUtil'] = df['bcUtil'].fillna(0)
 
     # add default info
     df['wgt_default'] = 0.0 
-    df.ix[df['loan_status']=='In Grace Period', 'wgt_default'] = 0.28
-    df.ix[df['loan_status']=='Late (16-30 days)', 'wgt_default'] = 0.58
-    df.ix[df['loan_status']=='Late (31-120 days)', 'wgt_default'] = 0.74
-    df.ix[df['loan_status']=='Default', 'wgt_default'] = 0.89
+    df.ix[df['loan_status']=='In Grace Period', 'wgt_default'] = 0.26
+    df.ix[df['loan_status']=='Late (16-30 days)', 'wgt_default'] = 0.59
+    df.ix[df['loan_status']=='Late (31-120 days)', 'wgt_default'] = 0.77
+    df.ix[df['loan_status']=='Default', 'wgt_default'] = 0.86
     df.ix[df['loan_status']=='Charged Off', 'wgt_default'] = 1.0
+
+
     # we want to find payments strictly less than 1 year, so we use 360 days here.
     just_under_one_year = 360*24*60*60*1e9  
     time_to_last_pymnt = df['last_pymnt_d']-df['issue_d']
@@ -186,18 +204,15 @@ def cache_training_data():
 
     # partial prepays
     df['mob'] = np.ceil(time_to_last_pymnt.astype(int) / (just_over_12months / 12.0))
-    prepayments = np.maximum(0, df.total_pymnt - df.mob * df.installment)
+    prepayments = np.maximum(0, df['total_pymnt'] - df['mob'] * df['installment'])
     partial_12m_prepay_idx = (df['loan_status']=='Current') & (prepayments > 0)
-    prepay_12m_pct = prepayments / df.loan_amnt * (12. / np.maximum(12., df.mob))
+    prepay_12m_pct = prepayments / df['loanAmount'] * (12. / np.maximum(12., df.mob))
     df.ix[partial_12m_prepay_idx, '12m_prepay'] = prepay_12m_pct[partial_12m_prepay_idx]
 
-   
-    df['emp_title'] = df['emp_title'].fillna('Blank').apply(lambda x:str(x).strip())
-    df['clean_title'] = df['emp_title'].apply(lambda x:clean_title(x))
+    df['empTitle'] = df['empTitle'].fillna('Blank').apply(lambda x:str(x).strip())
+    df['clean_title'] = df['empTitle'].apply(lambda x:clean_title(x))
 
-    df['mths_since_last_delinq'].fillna(LARGE_INT)
-    df['mths_since_last_major_derog'].fillna(LARGE_INT)
-    df['mths_since_last_record'].fillna(LARGE_INT)
+    print 'Data converted to standard format'
 
     # tag data for in-sample and oos (in sample issued at least 14 months ago. Issued 12-13 months ago is oos
     df['in_sample'] = df['issue_d'] < dt.now() - td(days=14*31)
@@ -221,24 +236,24 @@ def cache_training_data():
     z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
 
     one_year = 365*24*60*60*1e9
-    df['credit_length'] = ((df['issue_d'] - df['earliest_cr_line']).astype(int)/one_year)
+    df['credit_length'] = ((df['issue_d'] - df['earliestCrLine']).astype(int)/one_year)
     df['credit_length'] = df['credit_length'].apply(lambda x: max(-1,round(x,0)))
-    df['even_loan_amnt'] = df['loan_amnt'].apply(lambda x: float(x==round(x,-3)))
-    df['int_pymt'] = df['loan_amnt'] * df['int_rate'] / 1200.0
-    df['loan_amnt'] = df['loan_amnt'].apply(lambda x: round(x,-3))
-    df['revol_bal-loan'] = df['revol_bal'] - df['loan_amnt']
+    df['even_loan_amnt'] = df['loanAmount'].apply(lambda x: float(x==round(x,-3)))
+    df['int_pymt'] = df['loanAmount'] * df['intRate'] / 1200.0
+    df['loanAmount'] = df['loanAmount'].apply(lambda x: round(x,-3))
+    df['revol_bal-loan'] = df['revolBal'] - df['loanAmount']
 
     df['urate_d'] = df['issue_d'].apply(lambda x: int(str((x-td(days=60)))[:7].replace('-','')))
-    df['urate'] = [ur[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['avg_urate'] = [avg_ur[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['urate_chg'] = [ur_chg[a][b] for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['max_urate'] = [ur[a][:b].max() for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['min_urate'] = [ur[a][:b].min() for a,b in zip(df['zip_code'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['urate'] = [ur[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['avg_urate'] = [avg_ur[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['urate_chg'] = [ur_chg[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['max_urate'] = [ur[a][:b].max() for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
+    df['min_urate'] = [ur[a][:b].min() for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
     df['urate_range'] = df['max_urate'] - df['min_urate'] 
 
     df['issue_mth'] = df['issue_d'].apply(lambda x:int(str(x)[5:7]))
-    df['med_inc'] = df['zip_code'].apply(lambda x:z2mi[x])
-    df['pct_med_inc'] = df['annual_inc'] / df['med_inc']
+    df['med_inc'] = df['addrZip'].apply(lambda x:z2mi[x])
+    df['pct_med_inc'] = df['annualInc'] / df['med_inc']
 
 
     df['hpa_date'] = df['issue_d'].apply(lambda x:x-td(days=120))
@@ -248,16 +263,23 @@ def cache_training_data():
     mean_hpa4 = hpa4.mean(1)
     for c in missing_cols:
         hpa4[c] = mean_hpa4
-    df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['zip_code'].apply(lambda x: str(int(x))))]
+    df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['addrZip'].apply(lambda x: str(int(x))))]
 
-    df['pymt_pct_inc'] = df['installment'] / df['annual_inc'] 
-    df['revol_bal_pct_inc'] = df['revol_bal'] / df['annual_inc']
-    df['int_pct_inc'] = df['int_pymt'] / df['annual_inc'] 
-    df['cur_bal-loan_amnt'] = df['tot_cur_bal'] - df['loan_amnt'] 
-    df['cur_bal_pct_loan_amnt'] = df['tot_cur_bal'] / df['loan_amnt'] 
-    df['loan_pct_income'] = df['loan_amnt'] / df['annual_inc']
+    df['pymt_pct_inc'] = df['installment'] / df['annualInc'] 
+    df['revol_bal_pct_inc'] = df['revolBal'] / df['annualInc']
+    df['int_pct_inc'] = df['int_pymt'] / df['annualInc'] 
+    df['loan_pct_income'] = df['loanAmount'] / df['annualInc']
+    df['cur_bal-loan_amnt'] = df['totCurBal'] - df['loanAmount'] 
+    df['cur_bal_pct_loan_amnt'] = df['totCurBal'] / df['loanAmount'] 
 
-    df['title_capitalization'] = df['emp_title'].apply(tokenize_capitalization)
+    df['mort_bal'] = df['totCurBal'] - df['totalBalExMort']
+    df['mort_pct_credit_limit'] = df['mort_bal'] * 1.0 / df['totHiCredLim']
+    df['mort_pct_cur_bal'] = df['mort_bal'] * 1.0 / df['totCurBal']
+    df['revol_bal_pct_cur_bal'] = df['revolBal'] * 1.0 / df['totCurBal']
+
+    df['title_capitalization'] = df['empTitle'].apply(tokenize_capitalization)
+
+    print 'External data added'
 
     # add title rank feature 
     clean_title_count = Counter(df.ix[df.in_sample, 'clean_title'].values)
@@ -266,6 +288,8 @@ def cache_training_data():
     json.dump(clean_title_rank_dict, open(os.path.join(training_data_dir, 'clean_title_rank_map.json'),'w'))
     clean_title_rank_map = defaultdict(lambda :1e9, clean_title_rank_dict)
     df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_rank_map[x])
+ 
+    print 'Title ranks added'
 
     # process job title features
     sample = (df.grade>=2) & (df.in_sample)
@@ -274,12 +298,14 @@ def cache_training_data():
     ctlo = defaultdict(lambda :0, ctlo_dict)
     odds_map = lambda x: calc_log_odds('^{}$'.format(x), ctlo, 4)
     df['ctloC'] = df['clean_title'].apply(odds_map)
+    print 'ctlo added'
 
     caplo_dict = fast_create_log_odds(df.ix[sample], string_fld='title_capitalization')
     json.dump(caplo_dict, open(os.path.join(training_data_dir, 'caplo.json'),'w'))
     caplo = defaultdict(lambda :0, caplo_dict)
     odds_map = lambda x: calc_log_odds(x, caplo, 4) #Note title_capitalization already is in '^{}$' format
     df['caploC'] = df['title_capitalization'].apply(odds_map)
+    print 'caplo added'
 
     sample = (df.in_sample)
     pctlo_dict = fast_create_log_odds(df.ix[sample], string_fld='clean_title', numeric_fld='12m_prepay')
@@ -287,6 +313,7 @@ def cache_training_data():
     pctlo = defaultdict(lambda :0, pctlo_dict)
     odds_map = lambda x: calc_log_odds('^{}$'.format(x), pctlo, 4)
     df['pctlo'] = df['clean_title'].apply(odds_map)
+    print 'pctlo added'
 
     df.to_csv(cached_training_data_file)
 
@@ -408,7 +435,7 @@ def detail_str(loan):
     pstr += ' | StressIRR: {:1.2f}%'.format(100*loan['stress_irr'])
     pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*loan['base_irr_tax'])
     pstr += ' | StressIRRTax: {:1.2f}%'.format(100*loan['stress_irr_tax'])
-    pstr += ' | IntRate: {}%'.format(loan['int_rate'])
+    pstr += ' | IntRate: {}%'.format(loan['intRate'])
 
     pstr += '\nDefaultRisk: {:1.2f}%'.format(100*loan['default_risk'])
     pstr += ' | DefaultMax: {:1.2f}%'.format(100*loan['default_max'])
@@ -759,7 +786,7 @@ def get_income_data(census, fips_list):
     return result
 
 
-class ExternalDataManager(object):
+class LocationDataManager(object):
     def __init__(self):
 
         self.bls = load_bls()
@@ -770,25 +797,29 @@ class ExternalDataManager(object):
         self.metro = load_metro_housing()
         self.nonmetro = load_nonmetro_housing()
 
-    def add_features_to_loan(self, loan):
-        ''' Add all the external data sources to the loan details'''
-
-        zip3 = int(loan['zip3'])
+    def get_zip_features(self, zip3):
+        ''' takes the first three digits of the zip code and returns
+        a dictionary of features for that location'''
+        info = dict()
         ur, avg_ur, ur_chg, ur_range = get_urate(self.bls, zip3)
-        loan['urate'] = ur
-        loan['avg_urate'] = avg_ur
-        loan['urate_chg'] = ur_chg
-        loan['urate_range'] = ur_range
-        loan['med_income'] = get_income_data(self.census, self.z2f[zip3])
-        loan['primaryCity'] = self.z2pc[zip3]
+        info['urate'] = ur
+        info['avg_urate'] = avg_ur
+        info['urate_chg'] = ur_chg
+        info['urate_range'] = ur_range
+        info['med_income'] = get_income_data(self.census, self.z2f[zip3])
+        info['primaryCity'] = self.z2pc[zip3]
         metro_hpa = self.metro.ix[self.z2c[zip3]].dropna()
         if len(metro_hpa)>0:
-            loan['HPA1Yr'] = metro_hpa['1yr'].mean()
-            loan['HPA5Yr'] = metro_hpa['5yr'].mean()
+            info['HPA1Yr'] = metro_hpa['1yr'].mean()
+            info['HPA5Yr'] = metro_hpa['5yr'].mean()
         else:
-            nonmetro_hpa = self.nonmetro.ix[[loan['state']]]
-            loan['HPA1Yr'] = nonmetro_hpa['1yr'].values[0]
-            loan['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
+            print 'No FHFA data found for zip code {}xx'.format(zip3)
+            info['HPA1Yr'] = 0
+            info['HPA5Yr'] = 0
+        #    nonmetro_hpa = self.nonmetro.ix[[loan['state']]]
+        #    info['HPA1Yr'] = nonmetro_hpa['1yr'].values[0]
+        #    info['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
+        return info
 
 
 class LogOddsCalculator(object):
@@ -808,7 +839,7 @@ class LogOddsCalculator(object):
 def construct_loan_dict(grade, term, rate, amount):
     pmt = np.pmt(rate/1200., term, amount)
     loan = dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
-        ('loan_amount', amount), ('int_rate', rate)])
+        ('loan_amount', amount), ('intRate', rate)])
     return loan
 
 class ReturnCalculator(object):
@@ -858,7 +889,7 @@ class ReturnCalculator(object):
         prepayment_pool_decay_12m = (max_prepayment_pct - prepayment_rate_12m) / max_prepayment_pct
         prepay_rate = 1.0 - prepayment_pool_decay_12m ** (1/12.0)  
 
-        monthly_int_rate = loan['int_rate']/1200.
+        monthly_int_rate = loan['intRate']/1200.
         contract_monthly_payment = loan['monthly_payment'] / loan['loan_amount']
         current_monthly_payment = contract_monthly_payment
 
