@@ -10,8 +10,7 @@ from sklearn.externals import joblib
 import lclib
 import personalized as p
 
-#model_dir_name = 'YMHVDZ'
-model_dir_name = 'Model20170324'
+model_dir_name = 'Model20170402'
 model_path = os.path.join(p.parent_dir, model_dir_name)
 
 default_model_file = os.path.join(model_path, 'default_risk_model.pkl')

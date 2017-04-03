@@ -11,25 +11,25 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-from lclib import load_training_data
+import lclib
 
 if 'df' not in locals().keys():
-    df = load_training_data()
+    df = lclib.load_training_data()
 
 # decision variables: 
 dv = [
-      'loan_amnt', 
-      'int_rate', 
+      'loanAmount', 
+      'intRate', 
       'installment', 
       'term',
-      'sub_grade', 
+      'subGrade', 
       'purpose', 
-      'home_ownership', 
+      'homeOwnership', 
       'dti',
-      'inq_last_6mths', 
-      'mths_since_last_delinq', 
-      'revol_util', 
-      'total_acc', 
+      'inqLast6Mths', 
+      'mthsSinceLastDelinq',
+      'revolUtil', 
+      'totalAcc', 
       'credit_length',
       'even_loan_amnt', 
       'revol_bal-loan', 
@@ -39,14 +39,99 @@ dv = [
       'revol_bal_pct_inc',
       'urate_chg', 
       'hpa4',
-      'fico_range_low',
+      'ficoRangeLow',
       'loan_pct_income',
     ]
 
+dv = [
+     'accOpenPast24Mths',
+     'annualInc',
+     'avgCurBal',
+     'avg_urate',
+     'bcOpenToBuy',
+     'bcUtil',
+     'clean_title_rank',
+     'credit_length',
+     'cur_bal-loan_amnt',
+     'cur_bal_pct_loan_amnt',
+     'dti',
+     'empLength',
+     'even_loan_amnt',
+     'ficoRangeLow',
+     'homeOwnership',
+     'hpa4',
+     'initialListStatus',
+     'inqLast6Mths',
+     'installment',
+     'intRate',
+     'int_pct_inc',
+     'int_pymt',
+     'loanAmount',
+     'loan_pct_income',
+     'max_urate',
+     'med_inc',
+     'min_urate',
+     'moSinOldIlAcct',
+     'moSinOldRevTlOp',
+     'moSinRcntRevTlOp',
+     'moSinRcntTl',
+     'mortAcc',
+     'mort_bal',
+     'mort_pct_credit_limit',
+     'mort_pct_cur_bal',
+     'mthsSinceLastDelinq',
+     'mthsSinceLastMajorDerog',
+     'mthsSinceLastRecord',
+     'mthsSinceRecentBc',
+     'mthsSinceRecentInq',
+     'mthsSinceRecentRevolDelinq',
+     'numActvBcTl',
+     'numActvRevTl',
+     'numBcSats',
+     'numBcTl',
+     'numIlTl',
+     'numOpRevTl',
+     'numRevAccts',
+     'numRevTlBalGt0',
+     'numSats',
+     'numTlOpPast12m',
+     'pctTlNvrDlq',
+     'pct_med_inc',
+     'percentBcGt75',
+     'pubRecBankruptcies',
+     'purpose',
+     'pymt_pct_inc',
+     'revolBal',
+     'revolUtil',
+     'revol_bal-loan',
+     'revol_bal_pct_cur_bal',
+     'revol_bal_pct_inc',
+     'subGrade',
+     'term',
+     'totCollAmt',
+     'totCurBal',
+     'totHiCredLim',
+     'totalAcc',
+     'totalBalExMort',
+     'totalBcLimit',
+     'totalIlHighCreditLimit',
+     'totalRevHiLim',
+     'urate',
+     'urate_chg',
+     'urate_range',
+     'default_empTitle_alltoks_odds',
+     'prepay_empTitle_alltoks_odds'
+     ]
 
 iv = '12m_prepay'
-extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'int_rate', 'in_sample']
+extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
                 if tmp not in dv]
+required_cols = dv + extra_cols
+
+#Check that all the columns exist:
+for col in required_cols:
+    if col not in df.columns:
+        print col, 'is not in the cached data'
 
 fit_data = df.ix[:,dv+extra_cols]
 fit_data = fit_data.dropna()
@@ -59,10 +144,11 @@ x_train = fit_data.ix[fit_data.in_sample,:][dv].values
 y_train = fit_data.ix[fit_data.in_sample,:][iv].values
 y_test = fit_data.ix[~fit_data.in_sample,:][iv].values
 x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
-test_int_rate = fit_data.ix[~fit_data.in_sample, 'int_rate'].values
+test_int_rate = fit_data.ix[~fit_data.in_sample, 'intRate'].values
 test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 
-forest = RandomForestRegressor(n_estimators=200, max_depth=None, min_samples_leaf=400, verbose=2, n_jobs=8)
+forest = RandomForestRegressor(n_estimators=400, max_depth=None, min_samples_leaf=1000, 
+                               verbose=2, n_jobs=8, oob_score=True, max_features=0.5)
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
 predicted_prepayment = forest.predict(x_test)
@@ -76,9 +162,10 @@ predictions = np.vstack(predictions).T  #loans X trees
 test_data = fit_data.ix[~fit_data.in_sample] 
 test_data['prepay_prob'] = pf
 test_data['prepay_prob_65'] = np.percentile(predictions, 65, axis=1)
-  
+
+test_data['revUtil_grp'] = test_data['revolUtil'].apply(lambda x: min(5, int(x/10)))
 res_data = list()
-grp = test_data.groupby(['grade', 'term'])
+grp = test_data.groupby(['term', 'revUtil_grp'])
 prepay_fld = 'prepay_prob'
 for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
     sample = grp.get_group(k)
@@ -90,14 +177,12 @@ for k in sorted(grp.groups.keys(), key=lambda x:(x[1], x[0])):
     bottom_predict_mean = 100*grp_predict[bottom].mean()
     top_prepay_mean = 100*sample.ix[top, iv].mean() 
     top_predict_mean = 100*grp_predict[top].mean()
-    rate_diff = sample.ix[bottom, 'int_rate'].mean() - sample.ix[top, 'int_rate'].mean()
     res_data.append([k, len(sample), bottom_prepay_mean, top_prepay_mean, 
-                     bottom_predict_mean, top_predict_mean, rate_diff])
-cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted', 
-        'rate_diff']
+                     bottom_predict_mean, top_predict_mean])
+cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted']
 res = pd.DataFrame(res_data, columns=cols)
 res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
-res['decile10_error'] = res['decile10_predicted'] - res['decile10_actual']
+res = res.sort('group')
 print res
 
 data_str = ''
@@ -113,18 +198,21 @@ for k,v  in forest.get_params().items():
 data_str += '\n\nPrepays by Grade\n'
 data_str += res.to_string()
 
+data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
+
 print data_str
+
 time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
-fname = os.path.join(training_data_dir, 'prepay_forest_{}.txt'.format(time_str))
+fname = os.path.join(lclib.training_data_dir, 'prepay_forest_{}.txt'.format(time_str))
 with open(fname,'w') as f:
     f.write(data_str)
 
-fname = os.path.join(training_data_dir, 'prepay_variables.txt')
+fname = os.path.join(lclib.training_data_dir, 'prepay_variables.txt')
 with open(fname,'w') as f:
     f.write('\n'.join(dv))
 
 # pickle the classifier for persistence
-forest_fname = os.path.join(training_data_dir, 'prepay_risk_model_{}.pkl'.format(time_str))
+forest_fname = os.path.join(lclib.training_data_dir, 'prepay_risk_model.pkl')
 joblib.dump(forest, forest_fname, compress=3)
 
 

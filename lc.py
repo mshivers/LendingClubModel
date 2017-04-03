@@ -17,10 +17,9 @@ log = open(os.path.join(p.parent_dir, 'logfile.txt'), 'a')
 
 
 class Loan(object):
-    def __init__(self, api_data):
+    def __init__(self, features):
         self.search_time = dt.now()
-        self.api_data = api_data
-        self.model_inputs = dict()
+        self.features = features 
         self.model_outputs = dict()
         self.invested = {
                         'max_stage_amount': 0,
@@ -363,11 +362,11 @@ def main(min_irr=8, max_invest=500):
                     model.calc_prepayment_risk(loan)        
 
                     # calc standard irr
-                    irr = model.IRRCalculator.calc_irr(loan, loan['default_risk'], loan['prepay_risk'])
+                    irr = model.irr_calculator.calc_irr(loan, loan['default_risk'], loan['prepay_risk'])
                     loan['base_irr'], loan['base_irr_tax'] = irr
 
                     # calc stressed irr
-                    stress_irr = model.IRRCalculator.calc_irr(loan, loan['default_max'], loan['prepay_max'])
+                    stress_irr = model.irr_calculator.calc_irr(loan, loan['default_max'], loan['prepay_max'])
                     loan['stress_irr'], loan['stress_irr_tax'] = stress_irr
 
                     lclib.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 

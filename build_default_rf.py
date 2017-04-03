@@ -11,7 +11,7 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-from lclib import training_data_dir, reference_data_dir, load_training_data, LARGE_INT
+from lclib import training_data_dir, reference_data_dir, load_training_data
 
 if 'df' not in locals().keys():
     df = load_training_data()
@@ -25,10 +25,7 @@ dv = [
      'avg_urate',
      'bcOpenToBuy',
      'bcUtil',
-     'caploC',
-     'clean_title_rank',
      'credit_length',
-     'ctloC',
      'cur_bal-loan_amnt',
      'cur_bal_pct_loan_amnt',
      'dti',
@@ -56,6 +53,7 @@ dv = [
      'mort_bal',
      'mort_pct_credit_limit',
      'mort_pct_cur_bal',
+     'mthsSinceLastDelinq',
      'mthsSinceLastMajorDerog',
      'mthsSinceLastRecord',
      'mthsSinceRecentBc',
@@ -73,7 +71,6 @@ dv = [
      'numTlOpPast12m',
      'pctTlNvrDlq',
      'pct_med_inc',
-     'pctlo',
      'percentBcGt75',
      'pubRecBankruptcies',
      'purpose',
@@ -96,13 +93,9 @@ dv = [
      'urate',
      'urate_chg',
      'urate_range',
+     'default_empTitle_alltoks_odds',
+     'prepay_empTitle_alltoks_odds',
      ]
-
-#df['mthsSinceRecentRevolDelinq'] = df['mthsSinceRecentRevolDelinq'].fillna(LARGE_INT)
-#df['mthsSinceRecentInq'] = df['mthsSinceRecentInq'].fillna(LARGE_INT)
-#df['numTl120dpd2m'] = df['numTl120dpd2m'].fillna(0)
-#df['moSinOldIlAcct'] = df['moSinOldIlAcct'].fillna(0)
-
 
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
@@ -122,8 +115,8 @@ test_int_rate = fit_data.ix[~fit_data.in_sample, 'intRate'].values
 test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
 
 
-forest = RandomForestRegressor(n_estimators=400, max_depth=None, min_samples_leaf=100, 
-                               verbose=2, n_jobs=8, oob_score=True, max_features=0.5)
+forest = RandomForestRegressor(n_estimators=400, max_depth=None, min_samples_leaf=1000, 
+                               verbose=2, n_jobs=8, oob_score=True, max_features=0.50)
 forest = forest.fit(x_train, y_train) 
 forest.verbose=0
 
@@ -184,6 +177,6 @@ with open(fname,'w') as f:
     f.write('\n'.join(dv))
 
 # pickle the classifier for persistence
-forest_fname = os.path.join(training_data_dir, 'default_risk_model_{}.pkl'.format(time_str))
+forest_fname = os.path.join(training_data_dir, 'default_risk_model.pkl')
 joblib.dump(forest, forest_fname, compress=3)
 

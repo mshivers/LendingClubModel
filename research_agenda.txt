@@ -1,25 +1,19 @@
 New Feature Ideas:
 
+These two features need to use the detailed payments file for the features:
+Add a logodds feature for the clean_title that predicts whether the borrower will have a late payment in the next 12 months.  This should be correlated with default risk, but more robust, since it happens more often.
+
+Add another logodds feature for the clean_title that predicts whether the borrower will make a partial pre-payment in the next 12 months.  This should be negatively correlated with default risk.  Note the pctlo feature only predicts a full prepayment in 12 months, so doesn't need to payments file to do this.
+
+For the secondary market:
 Add a feature that estimates the log odds, by clean_title, that the borrower will default given a payment is late; are there some titles that pay late a lot but rarely default?  Or are the two metrics correlated the same amount regardless of conditioning on clean_title?
 
-For the title log odds model, start by estimating a prior for low-count strings: take all strings and calculate the log-odds for the set that contains only the first 100 instances (or however many exist, if less than 100).  Use this as the prior in the actual calculation instead of 0. 
 
-Build a model that forecasts the total loan ROI. 
-For current loans, assume the remaining loan payments will default at a rate determined by the current fico score.  
-Estimate this from the already-defaulted loans.
-
-Write up the data flow for all external data sources, and build a script that assembles all necessary data in an array indexed by zip3 code to be the sole data import.
-Write up the update schedule for all data sources.
-
-Think about how to fix the issue month feature.  We're using all default data up to 2 months ago, so current month will be, on average, older than most other months and will appear to default more.  Not sure this is a problem, since we're only estimating default for current month notes...
-
-
+#TODO: modify calc_irr to use the rev_util version of prepayment curves, and adjust the curves
+# by hinge tilting them from month 20 & 30 for 3-year and 5-year loans, resp, to match the prepay model result.
 
 Previous Results:
-New Feature Ideas
-To treat 36-month and 60-month loans similarly, perhaps the training data should try to predict default withing x% of maturity (e.g. 9 months for 3yr debt and 15 months for 5yr debt).  That way, as long as the hazard rates decline at the same rate, we should get an unbiased alpha.  Right now the 5yr bond alphas are biased up relative to 3yr bonds.
-
-Add median income from census bureau -- no influence
+Add median income from census bureau -- minor influence
 
 Add difference between borrower income and median income -- borrower income % median income is a good feature.
 
@@ -40,23 +34,3 @@ Look for IRS data on percentage of income given to charity, and add as zip3 feat
 -- no relationship at all between charity and defaults.
 
 
-Below shows the influence of the first decimal digit of the loan's interest rate:
-In [58]: g = df.groupby(df['int_rate'].apply(lambda x:np.floor(10*np.mod(x,1))))
-In [59]: g.mean()['24m_late']
-Out[59]:
-int_rate
-0.0000     0.0698
-1.0000     0.0549
-2.0000     0.0841
-3.0000     0.0612
-4.0000     0.0617
-5.0000     0.0552
-6.0000     0.0399
-7.0000     0.1110
-8.0000     0.0945
-9.0000     0.0345
-Name: 24m_late, dtype: float64
-
-
-
-Add feature for monthly payment as a percentage of monthly income.

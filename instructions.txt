@@ -1,4 +1,3 @@
-download updated LendingClub data (log in first to get the full dataset)
 
 run get_external_data.py to grab bls employment data and FHFA house-price data
 
@@ -16,17 +15,11 @@ run lclib.py::estimate_prepayement_curves()
 
 
 # build the random forest models for defaults and prepayments;
-TODO: need to save the decision variable lists to the training data directory.
-Make sure the rfs are written to the training data dir
 run build_default_rf.py
 run build_prepayment_rf.py
 
-TODO: save oos fit information to the training data directory.
-
-To push to prod, just copy entire training_data directory into a new directory, and change the production_model.py::model_directory to point to that
+To push to prod, just copy entire training_data directory into a new directory, and change the production_model.py::model_directory to point to that; when you run lc.py::main() it will use the model in that directory.
 
 
 
-
-##IDEA FOR FEATURE:  add feature defined as max(token log odds for clean title token) - min(token log odds of clean title token) to try to flag titles that randomly share substrings with good titles.  Also feature for max log odds for full word in title.
 

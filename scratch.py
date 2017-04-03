@@ -1,4 +1,22 @@
+sample = (df.in_sample)
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_prepay', tok='alltoks')
 
+1/0
+sample = (df.grade>=2) & (df.in_sample)
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='alltoks')
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok=6)
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok=7)
+add_log_odds_feature(df, sample, string_fld='clean_title', numeric_fld='12m_wgt_default', tok=4)
+add_log_odds_feature(df, sample, string_fld='title_capitalization', numeric_fld='12m_wgt_default', tok=4)
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='word')
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='phrase')
+
+sample = (df.in_sample)
+add_log_odds_feature(df, sample, string_fld='clean_title', numeric_fld='12m_prepay', tok=4)
+add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_prepay', tok='word')
+
+
+'''
 
 #test_data = fit_data.ix[~fit_data.in_sample] 
 #predictions = [tree.predict(x_test) for tree in forest.estimators_]
@@ -42,7 +60,6 @@ scores['score_abs'].plot()
 plt.ylim(0,plt.ylim()[1])
 plt.show()
 
-'''
 for k1,v1 in api_mid.items():
     for k2,v2 in hist_mid.items():
         try: 
