@@ -4,27 +4,82 @@ import matplotlib.pyplot as plt
 from datetime import datetime as dt, timedelta as td
 import json
 import os
-import sys
 from collections import defaultdict
 from sklearn.externals import joblib
 import lclib
-import personalized as p
+from personalized import p
+import numbers
+import utils
 
 model_dir_name = 'Model20170402'
 model_path = os.path.join(p.parent_dir, model_dir_name)
+model_path = lclib.training_data_dir
+
+class RandomForestModel(object):
+    def __init__(self, pkl_file, config_file):
+        self.pkl_file = pkl_file
+        self.config_file = config_file
+        self.random_forest = joblib.load(pkl_file) 
+        self.random_forest.verbose=0
+        self.config = json.load(open(config_file, 'r'))
+        assert 'inputs' in self.config.keys()
+        assert 'pctl' in self.config.keys()
+ 
+    def required_inputs(self):
+        return self.config['inputs']
+
+    def validate_inputs(self, inputs):
+        valid = True
+        if not isinstance(inputs, dict):
+            print 'RandomForest Input Error: input must be a dict, not a {}'.format(type(inputs))
+            valid = False
+
+        for field in self.required_inputs():
+            if field in inputs.keys():
+                value = inputs[field]
+                if not (isinstance(value, numbers.Number) and np.isfinite(value)):
+                    print 'RandomForest Invalid Input Error: {}:{} not valid'.format(field, value)
+                    valid = False
+            else:
+                print 'RandomForest Missing Input Error: {} not found'.format(field)
+                valid = False
+
+        return valid 
+
+    def run(self, inputs):
+        valid = self.validate_inputs(inputs)
+        if valid: 
+            x = np.zeros(len(self.config['inputs'])) * np.nan
+            for i, fld in enumerate(self.config['intputs']):
+                x[i] = inputs[fld]
+
+            predictions = [tree.predict(x)[0] for tree in self.random_forest.estimators_]
+            prediction =  np.percentile(predictions, self.config['pctl'])
+        
+        else: 
+            prediction = np.nan
+
+        return prediction 
+
+
+
 
 default_model_file = os.path.join(model_path, 'default_risk_model.pkl')
-default_model = joblib.load(default_model_file) 
-default_model.verbose=0
+default_model_config_file = os.path.join(model_path, 'default_model_config.json')
+default_model = RandomForestModel(default_model_file, default_model_config_file)
 
-prepayment_model_file = os.path.join(model_path, 'prepayment_risk_model.pkl')
-prepayment_model = joblib.load(prepayment_model_file) 
-prepayment_model.verbose=0
+prepay_model_file = os.path.join(model_path, 'prepay_risk_model.pkl')
+prepay_model_config_file = os.path.join(model_path, 'prepay_model_config.json')
+prepay_model = RandomForestModel(prepay_model_file, prepay_model_config_file)
 
 default_curves = json.load(open(os.path.join(model_path, 'default_curves.json'), 'r'))
 prepay_curves = json.load(open(os.path.join(model_path, 'prepay_curves.json'), 'r'))
 irr_calculator = lclib.ReturnCalculator(default_curves, prepay_curves)
 
+empTitle_freq_config = json.load(open(os.path.join(model_path, 'empTitle_frequency.json'), 'r'))
+empTitle_freq_model = lclib.FrequencyModel(**empTitle_freq_config)
+
+'''
 prod_clean_title_map = json.load(open(os.path.join(model_path, 'clean_title_rank_map.json'),'r'))
 prod_clean_title_map = defaultdict(lambda :1e9, prod_clean_title_map )
 
@@ -36,7 +91,7 @@ TitleDefault = lclib.LogOddsCalculator(ctlo_dict)
 
 pctlo_dict = json.load(open(os.path.join(model_path, 'pctlo.json'),'r'))
 TitlePrepay = lclib.LogOddsCalculator(pctlo_dict)
-
+'''
 def parse_REST_loan_details(loan):
     try:
         loan['currentCompany'] = '' #currentCompany data not exposed via API
@@ -178,65 +233,4 @@ def calc_model_input_field(loan, field):
         print 'Field {} not found'.format(field)
         return np.nan
 
-
-default_dv = open(os.path.join(model_path, 'default_variables.txt')).read().split()
-def calc_default_risk(loan):
-    try:
-        # decision variables: 
-        dv = default_dv
-        x = np.zeros(len(dv)) * np.nan
-        for i, fld in enumerate(dv):
-            x[i] = calc_model_input_field(loan, fld)
-
-        predictions = [tree.predict(x)[0] for tree in default_model.estimators_]
-        loan['default_risk'] = np.mean(predictions) 
-
-        # 65th percentile more closely matches the OOS realization
-        loan['default_max'] =  np.percentile(predictions, 65)
-    
-    except Exception as e:
-        msg = 'Error in production_model.py::default_risk()'
-        msg += '\n{}: Error {} in evaluating random forest\n'.format(dt.now(), str(e))
-        msg +='\nInput Loan data:\n'
-        for k,v in loan.iteritems():
-            msg += '{}:{}\n'.format(k,v)
-        msg += str(sys.exc_info()[1])
-        msg += '\n\n'
-        print msg
-        print zip(range(len(x)), x)
-        loan['default_risk'] = 1.0
-        loan['default_max'] = 1.0
-     
-    return loan['default_max']
-
-
-
-prepay_dv = open(os.path.join(model_path, 'prepay_variables.txt')).read().split()
-def calc_prepayment_risk(loan):
-    # decision variables: 
-    dv = prepay_dv
-    try:
-        x = np.zeros(len(dv)) * np.nan
-        for i, fld in enumerate(dv):
-            x[i] = calc_model_input_field(loan, fld)
-    
-        predictions = [tree.predict(x)[0] for tree in prepayment_model.estimators_]
-        loan['prepay_risk'] = np.mean(predictions) 
-        loan['prepay_max'] =  np.percentile(predictions, 65)
-    
-
-    except Exception as e:
-        msg = 'Error in production_model.py::prepay_risk()'
-        msg += '\n{}: Error {} in evaluating random forest\n'.format(dt.now(), str(e))
-        msg +='\nInput Loan data:\n'
-        for k,v in loan.iteritems():
-            msg += '{}:{}\n'.format(k,v)
-        msg += str(sys.exc_info()[1])
-        msg += '\n\n'
-        print msg
-        print zip(range(len(x)), x)
-        loan['prepay_risk'] = 1.0
-        loan['prepay_max'] = 1.0
-   
-    return loan['prepay_max']
 

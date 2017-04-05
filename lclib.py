@@ -1,8 +1,6 @@
 import os
 import json
-import urllib
 import requests
-import smtplib
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
@@ -10,150 +8,16 @@ from datetime import timedelta as td
 from collections import defaultdict, Counter
 import scipy.signal
 from matplotlib import pyplot as plt
-import personalized as p
+import utils
+from personalized import p
+from data_classes import ReferenceData, StringToNumberConverter, APIDataParser, PathManager
 
 LARGE_INT = 9999 
 NEGATIVE_INT = -1 
+update_hrs = [9,13,17,21]  #Times new loans are posted in NY time
 
-data_dir = os.path.join(p.parent_dir, 'data')
-loanstats_dir = os.path.join(p.parent_dir, 'data/loanstats')
-training_data_dir = os.path.join(p.parent_dir, 'data/training_data')
-reference_data_dir = os.path.join(p.parent_dir, 'data/reference_data')
-bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
-fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
-saved_prod_data_dir = os.path.join(p.parent_dir, 'data/saved_prod_data')
-
-payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170315.csv')
-cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
-
-update_hrs = [1,5,9,13,17,21]
-
-# clean dataframe
-class StringConverter(object):
-    def __init__(self):
-        self.accepted_fields = ['homeOwnership',
-                                'purpose',
-                                'grade',
-                                'subGrade',
-                                'isIncV', 
-                                'isIncVJoint',
-                                'initialListStatus',
-                                'empLength',
-                                'addrZip',
-                                'empTitle']
-        self.home_map = dict([('ANY', 0), ('NONE',0), ('OTHER',0), 
-                              ('RENT',1), ('MORTGAGE',2), ('OWN',3)])
-        self.purpose_dict = defaultdict(lambda :np.nan)
-        self.purpose_dict.update([('credit_card', 0), ('credit_card_refinancing', 0), 
-                                  ('debt_consolidation',1), 
-                                  ('home_improvement',2), 
-                                  ('car',3), ('car_financing',3), 
-                                  ('educational',4), 
-                                  ('house',5), ('home_buying',5),
-                                  ('major_purchase',6), 
-                                  ('medical_expenses',7), ('medical',7), 
-                                  ('moving',8), ('moving_and_relocation',8), 
-                                  ('other',9),
-                                  ('renewable_energy',10), ('green_loan',10),
-                                  ('business',11),('small_business',11),
-                                  ('vacation',12), 
-                                  ('wedding',13)])
-        grades = list('ABCDEFG')
-        self.grade_map = defaultdict(lambda :np.nan, zip(grades, range(len(grades))))
-        subgrades = ['{}{}'.format(l,n) for l in 'ABCDEFG' for n in range(1,6)]
-        self.subgrade_map = defaultdict(lambda :np.nan, zip(subgrades, range(len(subgrades))))
-        loanstats_verification_dict = dict([('Verified',2), ('Source Verified',1), ('Not Verified',0)]) 
-        api_verification_dict = dict([('VERIFIED',2), ('SOURCE_VERIFIED',1), ('NOT_VERIFIED',0)])
-        self.income_verification = loanstats_verification_dict
-        self.income_verification.update(api_verification_dict)
-        self.init_status_dict = dict([('f',0), ('F',0), ('w',1), ('W',1)])
-
-    def _employment_length_converter(self, el):
-        el=el.replace('< 1 year', '0')
-        el=el.replace('1 year','1')
-        el=el.replace('10+ years', '11')
-        el=el.replace('n/a', '-1')
-        el=el.replace(' years', '')
-        return int(el)
-    
-    def _convert_grade(self, value):
-        return self.grade_map[value]
-
-    def _convert_homeOwnership(self, value):
-        return self.home_map[value.upper()]
-
-    def _convert_purpose(self, value):
-        value = value.lower().replace(' ', '_')
-        return self.purpose_dict[value]
-
-    def _convert_subGrade(self, value):
-        return self.subgrade_map[value]
-
-    def _convert_inc_verification(self, value):
-        return self.income_verification[value]
-
-    def _convert_initialListStatus(self, value):
-        return self.init_status_dict[value]
-
-    def _convert_empLength(self, value):
-        return self._employment_length_converter(value)
-
-    def _convert_addrZip(self, value):
-        return int(value[:3])
-
-    def _convert_empTitle(self, value):
-        return only_ascii(field)
-         
-    def convert(self, field, value):
-        if field == 'homeOwnership':
-            if value.upper() in self.home_map.keys():
-                return self.home_map[value.upper()]
-        elif field == 'purpose':
-            value = value.lower().replace(' ', '_')
-            if value in self.purpose_dict.keys():
-                return self.purpose_dict[value]
-        elif field == 'grade':
-            if value in self.grade_map.keys():
-                return self.grade_map[value]
-        elif field == 'subGrade':
-            if value in self.subgrade_map.keys():
-                return self.subgrade_map[value]
-        elif field in ['isIncV', 'isIncVJoint']:
-            if value in self.income_verification.keys():
-                return self.income_verification[value]
-        elif field == 'initialListStatus':
-            if value in self.init_status_dict.keys():
-                return self.init_status_dict[value]
-        elif field == 'empLength':
-            return self._employment_length_converter(value)
-        elif field == 'addrZip':
-            return int(value[:3])
-        elif field == 'empTitle':
-            return '^{}$'.format(only_ascii(value))
-        else:
-            return value
-
-def substrings(x):
-    toks = list()
-    x = '^{}$'.format(x)
-    #add all whole words
-    toks.extend(x.split())
-    toks.extend([x[i:i+k] for k in range(1,len(x)+1) 
-        for i in range(max(1,len(x)-k+1))])
-    return list(set(toks))
-
-def clean_title(x):
-    x = str(x).strip().lower()
-    x = x.replace("'","")
-    x = x.replace('"','')
-    x = x.replace('/', ' ')
-    for tok in '`~!@#$%^&*()_-+=\|]}[{;:/?.>,<':
-        x = x.replace(tok,'_')
-    x = '^{}$'.format(x) 
-    return x
 
 def load_training_data(regen=False):
-
     if os.path.exists(cached_training_data_file) and not regen:
         update_dt = dt.fromtimestamp(os.path.getmtime(cached_training_data_file))
         days_old = (dt.now() - update_dt).days 
@@ -163,17 +27,13 @@ def load_training_data(regen=False):
         print 'Cache not found. Generating cache from source data'
         cache_training_data()
         df = load_training_data()
-
     return df
-
-def get_loanstats2api_map():
-    col_name_file = open(os.path.join(reference_data_dir, 'loanstats2api.txt'), 'r')
-    col_name_map = dict([line.strip().split(',') for line in col_name_file.readlines()])
-    return col_name_map
 
 def cache_training_data():
     #rename columns to match API fields
-    col_name_map = get_loanstats2api_map()
+    ref_data = ReferenceData() 
+    col_name_map = ref_data.get_loanstats2api_map()
+    training_data_dir = PathManager.get_dir('training')
 
     def clean_raw_data(df):
         df = df.rename(columns=col_name_map)
@@ -215,22 +75,22 @@ def cache_training_data():
         print 'Parsing {}'.format(col)
         df[col] = df[col].apply(cvt[col])
 
-    parser = APIDataParser()
-    for field in parser.null_fill_fields():
+    api_parser = APIDataParser()
+    for field in api_parser.null_fill_fields():
         if field in df.columns:
-            fill_value = parser.null_fill_value(field)
+            fill_value = api_parser.null_fill_value(field)
             print 'Filling {} nulls with {}'.format(field, fill_value)
             df[field] = df[field].fillna(fill_value)
 
-    string_converter = StringConverter()
+    string_converter = StringToNumberConverter()
     for col in string_converter.accepted_fields:
         if col in df.columns:
             print 'Converting {} string to numeric'.format(col)
             func = np.vectorize(lambda x: string_converter.convert(col, x))
             df[col] = df[col].apply(func)
    
-    df['clean_title'] = df['empTitle'].apply(clean_title)
-    df['title_capitalization'] = df['empTitle'].apply(tokenize_capitalization)
+    df['clean_title'] = df['empTitle'].apply(utils.clean_title)
+    df['empTitle_length'] = df['empTitle'].apply(lambda x: len(x))
 
     # Calculate target values for various prediction models
     # add default info
@@ -265,27 +125,31 @@ def cache_training_data():
     # tag data for in-sample and oos (in sample issued at least 14 months ago. Issued 12-13 months ago is oos
     df['in_sample'] = df['issue_d'] < dt.now() - td(days=14*31)
 
-    # add title rank feature 
-    print 'Adding Title Ranks'
-    clean_title_count = Counter(df.ix[df.in_sample, 'clean_title'].values)
-    clean_titles_sorted = [ttl[0] for ttl in sorted(clean_title_count.items(), key=lambda x:-x[1])]
-    clean_title_rank_dict = dict(zip(clean_titles_sorted, range(len(clean_titles_sorted))))
-    json.dump(clean_title_rank_dict, open(os.path.join(training_data_dir, 'clean_title_rank_map.json'),'w'))
-    clean_title_rank_map = defaultdict(lambda :1e9, clean_title_rank_dict)
-    df['clean_title_rank'] = df['clean_title'].apply(lambda x:clean_title_rank_map[x])
-
     # process job title features
     sample = (df.in_sample)
-    add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_prepay', tok='alltoks')
-    #add_log_odds_feature(df, sample, string_fld='clean_title', numeric_fld='12m_wgt_default', tok=4)
-    #add_log_odds_feature(df, sample, string_fld='title_capitalization', numeric_fld='12m_wgt_default', tok=4)
-    #add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='word')
-    #add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='phrase')
-
+    odds = OddsModel(tok_type='alltoks', string_name='empTitle', value_name='prepay')
+    odds.fit(df.ix[sample, 'empTitle'].values, df.ix[sample, '12m_prepay'].values)
+    odds.save(training_data_dir)
+    feature_name = '{}_{}_odds'.format(odds.string_name, odds.value_name)
+    df[feature_name] = df[odds.string_name].apply(odds.run)
+    
     sample = (df.grade>=2) & (df.in_sample)
-    add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='alltoks')
-    #add_log_odds_feature(df, sample, string_fld='clean_title', numeric_fld='12m_prepay', tok=4)
-    #add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_prepay', tok='word')
+    odds = OddsModel(tok_type='alltoks', string_name='empTitle', value_name='default')
+    odds.fit(df.ix[sample, 'empTitle'].values, df.ix[sample, '12m_wgt_default'].values)
+    odds.save(training_data_dir)
+    feature_name = '{}_{}_odds'.format(odds.string_name, odds.value_name)
+    df[feature_name] = df[odds.string_name].apply(odds.run)
+
+    #process frequency features
+    freq = FrequencyModel(string_name='clean_title')
+    freq.fit(df.ix[df.in_sample, 'clean_title'].values)
+    freq.save(training_data_dir)
+    df['{}_freq'.format(freq.string_name)] = df[freq.string_name].apply(freq.run)
+
+    freq = FrequencyModel(string_name='empTitle')
+    freq.fit(df.ix[df.in_sample, 'empTitle'].values)
+    freq.save(training_data_dir)
+    df['{}_freq'.format(freq.string_name)] = df[freq.string_name].apply(freq.run)
 
     ### Add non-LC features
     print 'Adding BLS data'
@@ -300,9 +164,6 @@ def cache_training_data():
     df['urate'] = [ur[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
     df['avg_urate'] = [avg_ur[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
     df['urate_chg'] = [ur_chg[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['max_urate'] = [ur[a][:b].max() for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['min_urate'] = [ur[a][:b].min() for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
-    df['urate_range'] = df['max_urate'] - df['min_urate'] 
 
     print 'Adding FHFA data'
     hpa4 = pd.read_csv(os.path.join(fhfa_data_dir, 'hpa4.csv'), index_col = 0)
@@ -316,12 +177,12 @@ def cache_training_data():
     df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['addrZip'].apply(lambda x: str(int(x))))]
      
     print 'Adding Census data'
-    z2mi = json.load(open(os.path.join(reference_data_dir, 'zip2median_inc.json'),'r'))
-    z2mi = dict([(int(z), float(v)) for z,v in zip(z2mi.keys(), z2mi.values())])
-    z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
-    df['med_inc'] = df['addrZip'].apply(lambda x:z2mi[x])
+    df['census_median_income'] = df['addrZip'].apply(ref_data.get_median_income)
 
     # Add calculated features 
+    feature_calculator = FeatureCalculator()
+    feature_calculator.compute(df)
+    '''
     print 'Adding Computed features'
     one_year = 365*24*60*60*1e9
     df['credit_length'] = ((df['issue_d'] - df['earliestCrLine']).astype(int)/one_year)
@@ -329,7 +190,7 @@ def cache_training_data():
     df['even_loan_amnt'] = df['loanAmount'].apply(lambda x: float(x==round(x,-3)))
     df['int_pymt'] = df['loanAmount'] * df['intRate'] / 1200.0
     df['revol_bal-loan'] = df['revolBal'] - df['loanAmount']
-    df['pct_med_inc'] = df['annualInc'] / df['med_inc']
+    df['pct_med_inc'] = df['annualInc'] / df['census_median_income']
     df['pymt_pct_inc'] = df['installment'] / df['annualInc'] 
     df['revol_bal_pct_inc'] = df['revolBal'] / df['annualInc']
     df['int_pct_inc'] = df['int_pymt'] / df['annualInc'] 
@@ -340,443 +201,115 @@ def cache_training_data():
     df['mort_pct_credit_limit'] = df['mort_bal'] * 1.0 / df['totHiCredLim']
     df['mort_pct_cur_bal'] = df['mort_bal'] * 1.0 / df['totCurBal']
     df['revol_bal_pct_cur_bal'] = df['revolBal'] * 1.0 / df['totCurBal']
+    '''
+    df.to_csv(PathManager.get_filepath('training_cache'))
 
-    df.to_csv(cached_training_data_file)
+
+class FrequencyModel(object):
+    ''' Model that converts a string feature into the number of 
+    instances of that string that exists in the historical data'''
+
+    def __init__(self, freq_dict=None, string_name=None):
+        if isinstance(freq_dict, dict):
+            freq_dict = defaultdict(lambda :0, freq_dict)
+        self.freq_dict = freq_dict
+        self.string_name = string_name
+
+    def fit(self, strings):
+        '''Creates the dictionary with the frequency mapping'''
+        counts = Counter(strings)
+        self.freq_dict = defaultdict(lambda :0, counts.items())
+
+    def run(self, input_string):
+        return self.freq_dict[input_string]
+
+    def is_fit(self):
+        return isinstance(self.freq_dict, dict)
+
+    def save(self, fname):
+        config = {'freq_dict': dict(self.freq_dict), 
+                  'string_name':self.string_name}
+        if os.path.isdir(fname):
+            file_name = '{}_frequency.json'.format(self.string_name)
+            fname = os.path.join(fname, file_name) 
+        json.dump(config, open(fname, 'w'))
 
 
-def only_ascii(s):
-    return ''.join([c for c in s if ord(c)<128])
 
-def get_tokens(x, tok_type):
-    if len(x)==0:
-        return [] 
-    if tok_type=='word':
-        x = x.replace('^','').replace('$','')
-        toks = x.split()
-    elif tok_type=='phrase':
-        toks = [x]
-    elif tok_type=='alltoks':
-        toks = list()
-        for i in range(1, len(x)+1):
-            toks.extend(get_tokens(x, tok_type=i))
-    elif isinstance(tok_type, int):
-        toks = [x[i:i+tok_type] for i in range(max(1,len(x)-tok_type+1))]
-    else:
-        raise Exception('unknown tok_type')
-    return toks
+class OddsModel(object):
+    def __init__(self, tok_type, odds_dict=None, string_name=None, value_name=None):
+        self.tok_type = tok_type
+        if isinstance(odds_dict, dict):
+            odds_dict = defaultdict(lambda :0, odds_dict)
+        self.odds_dict = odds_dict 
+        self.string_name = string_name #name of the string field to apply the model to.
+        self.value_name = value_name #name of the value field the model predicts 
+    
+    def _get_all_substrings(self, input_string):
+        length = len(input_string)
+        return [input_string[i:j+1] for i in xrange(length) for j in xrange(i,length)]
+       
+    def _get_substrings_of_length(self, input_string, length):
+        return [input_string[i:i+length+1] for i in range(max(1,len(input_string)-length))]
 
-def calc_log_odds(x, log_odds_dict, tok_type):
-    toks = get_tokens(x, tok_type)
-    log_odds = np.sum(map(lambda x:log_odds_dict[x], toks))
-    return log_odds
+    def _get_words(self, input_string):
+        return input_string.strip().split()
 
-def tokenize_capitalization(txt):
-    txt = txt.strip()
-    #replace upper characters with 'C', lower with 'c', etc...
-    tokstr = []
-    for c in txt:
-        if c.isupper():
-            tokstr.append('C')
-        elif c.islower():
-            tokstr.append('c')
-        elif c.isdigit():
-            tokstr.append('n')
-        elif c.isspace():
-            tokstr.append(' ')
+    def get_tokens(self, input_string):
+        if self.tok_type=='word':
+            toks = self._get_words(input_string) 
+        elif self.tok_type=='phrase':
+            toks = [input_string]
+        elif self.tok_type=='alltoks':
+            toks = self._get_all_substrings(input_string) 
+        elif isinstance(self.tok_type, int):
+            toks = self._get_substrings_of_length(input_string, self.tok_type) 
         else:
-            tokstr.append('p') #punctuation
-    tokenized = ''.join(tokstr)
-    tokenized = '^{}$'.format(tokenized) #add leading a trailing token to distinguish first and last characters.
-    return tokenized
+            raise Exception('unknown tok_type')
+        return toks
 
-def fast_create_log_odds(df, string_fld='clean_title', numeric_fld='12m_wgt_default', tok_type=4):
-    ''' creates a log odds dictionary.  The tok_type field is either the length of the string token
-    to use, or if tok_type='word', the tokens are entire words'''
-    fld_sum = defaultdict(lambda :0)
-    fld_count = defaultdict(lambda :0)
-    g = df[[string_fld, numeric_fld]].groupby(string_fld)
-    data = g.agg(['sum', 'count'])[numeric_fld]
-    numeric_mean = df[numeric_fld].mean() 
-    for title, row in data.iterrows():
-        tokens = get_tokens(title, tok_type)
-        for tok in tokens:
-            fld_sum[tok] += row['sum']
-            fld_count[tok] += row['count']
-    
-    C = 500.0
-    fld_count = pd.Series(fld_count)
-    fld_sum = pd.Series(fld_sum)
-    logodds = (fld_sum + C * numeric_mean) / (fld_count + C)
-    logodds = np.log(logodds) - np.log(numeric_mean)
+    def fit(self, strings, values):
+        ''' creates odds dictionary.  The tok_type field is either the length of the string token
+        to use, or if tok_type='word', the tokens are entire words'''
+        value_sum = defaultdict(lambda :0)
+        tok_count = defaultdict(lambda :0)
+        data = pd.DataFrame({'strings':strings, 'values':values})
+        global_mean = data['values'].mean() 
+        grp = data.groupby('strings')
+        summary = grp.agg(['sum', 'count'])['values']
+        for string, row in summary.iterrows():
+            tokens = self.get_tokens(string)
+            for tok in tokens:
+                value_sum[tok] += row['sum']
+                tok_count[tok] += row['count']
+        
+        C = 500.0
+        tok_count = pd.Series(tok_count)
+        value_sum = pd.Series(value_sum)
+        tok_mean = (value_sum + C * global_mean) / (tok_count + C)
+        odds = tok_mean - global_mean
 
-    # we need to remove the items with only small counts, since these would cause
-    # the random forest to overfit to those.
-    logodds = logodds[fld_count>100]
+        # the random forest to overfit to those.
+        odds = odds[tok_count>100]
+        self.odds_dict = defaultdict(lambda :0, odds.to_dict())
 
-    return logodds.to_dict() 
+    def run(self, input_string):
+        toks = self.get_tokens(input_string)
+        odds = np.sum(map(lambda x:self.odds_dict[x], toks))
+        return odds
 
-def add_log_odds_feature(df, sample, string_fld, numeric_fld, tok): 
-    if 'prepay' in numeric_fld:
-        predictor = 'prepay'
-    elif 'default' in numeric_fld:
-        predictor = 'default'
-    else:
-        predictor = 'unknown'
+    def is_fit(self):
+        return isinstance(self.odds_dict, dict)
 
-    if isinstance(tok, int):
-        tok_str = 'tok{}'.format(tok)
-    else: 
-        tok_str = tok
-
-    name = '{}_{}_{}_odds'.format(predictor, string_fld, tok_str)
-    print 'Calculating {} {} {} odds'.format(string_fld, tok_str, predictor)
-    lo_dict = fast_create_log_odds(df.ix[sample], string_fld=string_fld,
-                                   numeric_fld=numeric_fld, tok_type=tok)
-    json.dump(lo_dict, open(os.path.join(training_data_dir, '{}.json'.format(name)),'w'))
-    lo = defaultdict(lambda :0, lo_dict)
-    odds_map = lambda x: calc_log_odds(x, lo, tok)
-    df[name] = df[string_fld].apply(odds_map)
-
-
-def reset_time():
-    try:
-        import os
-        print 'Attempting to adjust system time'
-        response = os.popen('sudo ntpdate -u time.apple.com')
-        print response.read()
-        print 'Reset Time Successfully!'  
-    except:
-        print 'Failed to reset system time' 
-
-def get_web_time():
-    try:
-        import os
-        print 'Attempting to adjust system time'
-        response = os.popen('sudo ntpdate -u time.apple.com')
-        print response.read()
-        print 'Success!'
-        response = urllib.urlopen('http://www.timeapi.org/est/now').read()
-        time = dt.strptime(response[:-6], '%Y-%m-%dT%H:%M:%S') 
-        print 'Web Time: {}'.format(time)
-        print 'Sys Time: {}'.format(dt.now())
-    except:
-        print 'Failed to get web time'
-        time = dt.now()
-
-    return time 
-
-
-def hourfrac(tm):
-    return (tm.hour + tm.minute/60.0 + tm.second / 3600.0)
-
-
-def invest_amount(loan, min_irr, max_invest=None):
-    if max_invest==None:
-        max_invest = 500
-    if loan['stress_irr'] < min_irr:
-        stage_amount = 0 
-    else:
-        # invest $25 for every 25bps that stress_irr exceeds min_irr
-        stage_amount =  max(0, 25 * np.ceil(400*(loan['stress_irr'] - min_irr)))
-    #don't invest in grade G loans; model doesn't work as well for those
-    if loan['grade'] >= 'G':
-        stage_amount = 0
-    loan['max_stage_amount'] =  min(max_invest, stage_amount) 
-
-
-def sleep_seconds(win_len=30):
-     # win_len is the number of seconds to continuously check for new loans.
-     # The period ends at the official update time.  
-     now = dt.now()
-     tm = now + td(seconds=win_len/2.0)
-     update_seconds = np.array([60*60*(hr - hourfrac(tm)) for hr in update_hrs])
-     center = min(abs(update_seconds))
-     max_sleep_seconds = 0.8 * max(center - win_len, 0)
-     #seconds_to_hour = (59 - now.minute) * 60.0 + (60 - now.second)
-     return max_sleep_seconds
-
-
-def detail_str(loan):
-
-    pstr = 'BaseIRR: {:1.2f}%'.format(100*loan['base_irr'])
-    pstr += ' | StressIRR: {:1.2f}%'.format(100*loan['stress_irr'])
-    pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*loan['base_irr_tax'])
-    pstr += ' | StressIRRTax: {:1.2f}%'.format(100*loan['stress_irr_tax'])
-    pstr += ' | IntRate: {}%'.format(loan['intRate'])
-
-    pstr += '\nDefaultRisk: {:1.2f}%'.format(100*loan['default_risk'])
-    pstr += ' | DefaultMax: {:1.2f}%'.format(100*loan['default_max'])
-    pstr += ' | PrepayRisk: {:1.2f}%'.format(100*loan['prepay_risk'])
-    pstr += ' | PrepayMax: {:1.2f}%'.format(100*loan['prepay_max'])
-    pstr += ' | RiskFactor: {:1.2f}'.format(loan['risk_factor'])
-
-    pstr += '\nInitStatus: {}'.format(loan['initialListStatus'])
-    pstr += ' | Staged: ${}'.format(loan['staged_amount'])
-
-    pstr += '\nLoanAmnt: ${:1,.0f}'.format(loan['loanAmount'])
-    pstr += ' | Term: {}'.format(loan['term'])
-    pstr += ' | Grade: {}'.format(loan['subGrade'])
-    pstr += ' | Purpose: {}'.format(loan['purpose'])
-    pstr += ' | LoanId: {}'.format(loan['id'])
-    
-    pstr += '\nRevBal: ${:1,.0f}'.format(loan['revolBal'])
-    pstr += ' | RevUtil: {}%'.format(loan['revolUtil'])
-    pstr += ' | DTI: {}%'.format(loan['dti'])
-    pstr += ' | Inq6m: {}'.format(loan['inqLast6Mths'])
-    pstr += ' | 1stCredit: {}'.format(loan['earliestCrLine'].split('T')[0])
-    pstr += ' | fico: {}'.format(loan['ficoRangeLow'])
-  
-    pstr += '\nJobTitle: {}'.format(loan['currentJobTitle'])
-    pstr += ' | Company: {}'.format(loan['currentCompany'])
-    
-    pstr += '\nClean Title Log Odds: {:1.2f}'.format(loan['clean_title_log_odds'])
-    pstr += ' | Capitalization Log Odds: {:1.2f}'.format(loan['capitalization_log_odds'])
-    pstr += ' | Income: ${:1,.0f}'.format(loan['annualInc'])
-    pstr += ' | Tenure: {}'.format(loan['empLength'])
-
-    pstr += '\nLoc: {},{}'.format(loan['addrZip'], loan['addrState'])
-    pstr += ' | MedInc: ${:1,.0f}'.format(loan['med_income'])
-    pstr += ' | URate: {:1.1f}%'.format(100*loan['urate'])
-    pstr += ' | 12mChg: {:1.1f}%'.format(100*loan['urate_chg'])
-
-    pstr += '\nHomeOwn: {}'.format(loan['homeOwnership'])
-    pstr += ' | PrimaryCity: {}'.format(loan['primaryCity'])
-    pstr += ' | HPA1: {:1.1f}%'.format(loan['HPA1Yr'])
-    pstr += ' | HPA5: {:1.1f}%'.format(loan['HPA5Yr'])
-
-    return pstr 
-
-email_keys = ['accOpenPast24Mths','mthsSinceLastDelinq', 'mthsSinceRecentBc', 'bcUtil', 'totCollAmt', 
-        'isIncV', 'numTlOpPast12m', 'totalRevHiLim', 'mthsSinceRecentRevolDelinq', 'revolBal',
-        'pubRec', 'delinq2Yrs', 'inqLast6Mths', 'numOpRevTl', 'pubRecBankruptcies', 'numActvRevTl',
-        'mthsSinceRecentBcDlq', 'revolUtil', 'numIlTl', 'numRevTlBalGt0', 'numTl90gDpd24m', 'expDefaultRate', 
-        'initialListStatus', 'moSinOldIlAcct', 'numBcTl', 'totHiCredLim', 'delinqAmnt', 'moSinOldRevTlOp', 
-        'numRevAccts', 'totalAcc', 'mortAcc', 'mthsSinceRecentInq', 'moSinRcntRevTlOp','totCurBal', 
-        'collections12MthsExMed', 'dti', 'numActvBcTl', 'pctTlNvrDlq', 'totalBcLimit',
-        'accNowDelinq', 'numTl30dpd', 'percentBcGt75', 'numBcSats', 'openAcc', 'numAcctsEver120Ppd', 'bcOpenToBuy',
-        'numTl120dpd2m', 'taxLiens', 'mthsSinceLastRecord', 'totalBalExMort', 'avgCurBal', 'moSinRcntTl', 
-        'mthsSinceLastMajorDerog', 'totalIlHighCreditLimit', 'chargeoffWithin12Mths', 'clean_title_rank']
-
-email_keys = [ 'isIncV', 'totalRevHiLim', 'revolBal', 'numRevTlBalGt0', 'numTl90gDpd24m',
-        'initialListStatus', 'totHiCredLim', 'delinqAmnt', 'mortAcc', 'totCurBal', 
-        'pctTlNvrDlq', 'totalBcLimit', 'numTl30dpd', 'percentBcGt75', 'numAcctsEver120Ppd',
-        'numTl120dpd2m', 'totalBalExMort', 'avgCurBal',
-        'totalIlHighCreditLimit', 'clean_title_rank']
-
-def all_detail_str(loan):
-    all_details = '\n'.join(sorted(['{}: {}'.format(k,v) for k,v in loan.items() 
-        if k in email_keys or k.startswith('dflt')]))
-    return all_details 
-
-
-def send_email(msg):
-    server = smtplib.SMTP('smtp.gmail.com:587')
-    server.ehlo()
-    server.starttls()
-    server.login(p.email, p.smtp_password)
-    msg_list = ['From: {}'.format(p.email), 
-                'To: {}'.format(p.email), 
-                'Subject: Lending Club', '']
-    msg_list.append(msg)
-    msg = '\r\n'.join(msg_list) 
-    server.sendmail(p.email, [p.email], msg)
-    return
-
-
-def email_details(acct, loans, info):
-    msg_list = list()
-    msg_list.append('{} orders have been staged to {}'.format(len(loans), acct))
-    msg_list.append('{} total loans found, valued at ${:1,.0f}'.format(info['num_new_loans'], info['value_new_loans']))
-
-    count_by_grade = dict(zip('ABCDEFG', np.zeros(7)))
-    for loan in loans:
-        if loan['email_details'] == True:
-            count_by_grade[loan['grade']] += 1
-
-    g = info['irr_df'].groupby(['grade', 'initialListStatus'])
-    def compute_metrics(x):
-        result = {'irr_count': x['base_irr'].count(), 'irr_mean': x['base_irr'].mean()}
-        return pd.Series(result, name='metrics')
-    msg_list.append(g.apply(compute_metrics).to_string())
-
-    irr_msgs = list()
-    irr_msgs.append('Average IRR is {:1.2f}%.'.format(100*info['average_irr']))
-    for grade in sorted(info['irr_by_grade'].keys()):
-        avg = 100*np.mean(info['irr_by_grade'][grade])
-        num = len(info['irr_by_grade'][grade])
-        bought = int(count_by_grade[grade])
-        irr_msgs.append('Average of {} grade {} IRRs is {:1.2f}%; {} staged.'.format(num, grade, avg, bought))
-    msg_list.append('\r\n'.join(irr_msgs))
-
-    for loan in loans:
-        if loan['email_details'] == True:
-            msg_list.append(detail_str(loan))
-            msg_list.append(all_detail_str(loan))
-        loan['email_details'] = False
-    msg_list.append('https://www.lendingclub.com/account/gotoLogin.action')
-    msg_list.append('Send at MacOSX clocktime {}'.format(dt.now()))
-    msg = '\r\n\n'.join(msg_list) 
-    send_email(msg)
-    return
-
-
-def load_census_data():
-    # loads the census bureaus low-income area data
-    fname = os.path.join(reference_data_dir, 'lya2014.txt')
-    rows = open(fname,'r').read().split('\r\n')
-    data = [r.split() for r in rows]
-    df = pd.DataFrame(data[1:], columns=data[0])
-    df = df.dropna()
-    df['STATE'] = df['STATE'].astype(int)
-    df['CNTY'] = df['CNTY'].astype(int)
-    df['FIPS'] = 1000 * df['STATE'] + df['CNTY']
-    df['LYA'] = df['LYA'].astype(float)
-    df['CENINC'] = df['CENINC'].astype(float)
-    df = df[df['LYA'] <= 1]  # remove missing data (LYA==9)
-    return df
-
-def load_nonmetro_housing():
-    link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
-    try:
-        data = pd.read_excel(link, skiprows=2)
-        data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_nonmetro.csv'))
-    except:
-        data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_nonmetro.csv'))
-        print '{}: Failed to load FHFA nonmetro data; using cache\n'.format(dt.now())
-
-    grp = data.groupby('State')
-    tail5 = grp.tail(21).groupby('State')['Index']
-    chg5 = np.log(tail5.last()) - np.log(tail5.first())
-    tail1 = grp.tail(5).groupby('State')['Index']
-    chg1 = np.log(tail1.last()) - np.log(tail1.first())
-    chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
-    return chg
-
- 
-def load_metro_housing():
-    # loads the fhfa home price quarterly index data for Census Bureau
-    # Statistical Areas
-    link = "http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_metro.csv"
-    cols = ['Location','CBSA', 'yr','qtr','index', 'stdev']
-    try:
-        data = pd.read_csv(link, header=None, names=cols)
-        data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_metro.csv'))
-    except:
-        data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_metro.csv'), skiprows=1, header=None, names=cols)
-        print '{}: Failed to load FHFA metro data; using cache\n'.format(dt.now())
-    data = data[data['index']!='-']
-    data['index'] = data['index'].astype(float)
-    grp = data.groupby('CBSA')[['Location','CBSA', 'yr','qtr','index', 'stdev']]
-    tail5 = grp.tail(21).groupby(['CBSA','Location'])['index']
-    chg5 = np.log(tail5.last()) - np.log(tail5.first())
-    tail1 = grp.tail(5).groupby(['CBSA','Location'])['index']
-    chg1 = np.log(tail1.last()) - np.log(tail1.first())
-    chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
-    chg = chg.reset_index(1)
-    return chg
-
-    
-# Get unemployment rates by County (one-year averages)
-def load_bls():
-
-    z2f = load_z2f()
-
-    bls_fname = os.path.join(bls_data_dir, 'bls_summary.csv')
-    if os.path.exists(bls_fname):
-        update_dt = dt.fromtimestamp(os.path.getmtime(bls_fname))
-        days_old = (dt.now() - update_dt).days 
-        summary = pd.read_csv(bls_fname)
-    else:
-        days_old = 999
-
-    if days_old > 14:
-        try:
-            link = 'http://www.bls.gov/lau/laucntycur14.txt'
-            link = 'http://www.bls.gov/web/metro/laucntycur14.txt'
-            cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
-                'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
-            file = requests.get(link)
-            rows = [l.split('|') for l in file.text.split('\r\n') if l.startswith(' CN')]
-            data =pd.DataFrame(rows, columns=cols)
-            data['Period'] = data['Period'].apply(lambda x:dt.strptime(x.strip()[:6],'%b-%y'))
-
-            # keep only most recent 12 months; note np.unique also sorts
-            min_date = np.unique(data['Period'])[1]
-            data = data[data['Period']>=min_date]
-
-            # reduce Code to just state/county fips number
-            to_float = lambda x: float(str(x).replace(',',''))
-            data['FIPS'] = data['Code'].apply(lambda x: int(x.strip()[2:7]))
-
-            # convert numerical data to floats
-            for col in ['CLF', 'Unemployed']:
-                data[col] = data[col].apply(to_float)
-            data = data.ix[:,['Period','FIPS','CLF','Unemployed']]
-            lf = data.pivot('Period', 'FIPS','CLF')
-            ue = data.pivot('Period', 'FIPS', 'Unemployed')
-            
-            avg_ur = dict()
-            ur = dict()
-            ur_chg = dict()
-            ur_range = dict()
-            for z, fips in z2f.items():
-                avg_ur[z] =  ue.ix[1:,fips].sum(1).sum(0) / lf.ix[1:,fips].sum(1).sum(0)
-                ur[z] =  ue.ix[-1,fips].sum(0) / lf.ix[-1,fips].sum(0)
-                last_year_ur =  ue.ix[1,fips].sum(0) / lf.ix[1,fips].sum(0)
-                ur_chg[z] = ur[z] - last_year_ur
-                monthly_ue = ue.ix[:, fips].sum(1)
-                ur_range[z] = (monthly_ue.max() - monthly_ue.min()) / lf.ix[-1,fips].sum(0) 
-
-            summary = pd.DataFrame({'avg':pd.Series(avg_ur),'current':pd.Series(ur),
-                'chg12m':pd.Series(ur_chg), 'ur_range':pd.Series(ur_range)})
-            
-            summary.to_csv(bls_fname)
-
-        except:
-            print '{}: Failed to load BLS laucntycur14 data; using summary cache\n'.format(dt.now())
-    
-    return summary 
-    
-
-def load_z2c():
-    ''' Core crosswalk file from www.huduser.org/portal/datasets/usps_crosswalk.htlm'''
-    data = pd.read_csv(os.path.join(reference_data_dir, 'z2c.csv'))
-    data['3zip'] = (data['ZIP']/100).astype(int)
-    data['CBSA'] = data['CBSA'].astype(int)
-    data = data[data['CBSA']!=99999]
-    grp = data.groupby('3zip')
-    z2c = defaultdict(lambda :list())
-    for z in grp.groups.keys():
-        z2c[z] = list(set(grp.get_group(z)['CBSA'].values))
-    return z2c 
-
-
-def load_z2loc():
-    ''' loads a dictionary mapping the first 3 digits of the zip code to a 
-    list of location names''' 
-    data = json.load(open(os.path.join(reference_data_dir, 'zip2location.json'), 'r'))
-    return dict([int(k), locs] for k, locs in data.items())
-
-
-def load_z2primarycity():
-    ''' loads a dictionary mapping the first 3 digits of the zip code to the
-    most common city with that zip code prefix'''
-    data = json.load(open(os.path.join(reference_data_dir,'zip2primarycity.json')))
-    return dict([int(k), locs] for k, locs in data.items())
-
-
-def load_z2f():
-    ''' loads a dictionary mapping the first 3 digits of the zip code to a 
-    list of FIPS codes'''
-    d = json.load(open(os.path.join(reference_data_dir, 'z2f.json'), 'r'))
-    return dict([int(k), [int(v) for v in vals]] for k, vals in d.items())
-
-
-def load_f2c():
-    ''' loads a dictionary mapping FIPS codes to CBSA codes and names '''
-    #need a mapping that lists NY-NJ to 35614, rather than 36544
-    d = json.load(open(os.path.join(reference_data_dir, 'fips2cbsa.json'), 'r'))
-    return dict([int(k), [int(v[0]), v[1]]] for k, v in d.items())
+    def save(self, fname):
+        config = {'odds_dict': dict(self.odds_dict), 
+                  'string_name':self.string_name, 
+                  'value_name':self.value_name, 
+                  'tok_type': self.tok_type}
+        if os.path.isdir(fname):
+            file_name = '{}_{}_{}_odds.json'.format(self.value_name, self.string_name, self.tok_type)
+            fname = os.path.join(fname, file_name) 
+        json.dump(config, open(fname, 'w'))
 
 
 def save_loan_info(loans):
@@ -793,187 +326,71 @@ def save_loan_info(loans):
         l['details_saved']=True
     f.close()
 
-    
-
-def construct_z2c(z2f, f2c):
-    z2c = dict()
-    for z, fips in z2f.iteritems():
-        clist = set()
-        for f in fips:
-            if f in f2c.keys():
-               clist.add(f2c[f][0])
-        z2c[z] = clist 
-    return z2c 
-
-
-def get_loan_details(lc, loan_id):
-    '''
-    Returns the loan details, including location, current job title, 
-    employer, relisted status, and number of inquiries.
-    '''
-    payload = {
-        'loan_id': loan_id
-    }
-
-    # Make request
-    try:
-        response = lc.session.post('/browse/loanDetailAj.action', data=payload)
-        detail = response.json()
-        return detail 
-    except:
-        return -1
-
-
-def get_urate(bls, zip):
-    if zip in bls.index:
-        urate = bls.ix[zip,'current']
-        ur_chg = bls.ix[zip,'chg12m']
-        avg_ur = bls.ix[zip,'avg']
-        ur_range = bls.ix[zip,'ur_range']
-    else:
-        near_zip = bls.index[np.argmin(np.abs(np.array(bls.index)-zip))]
-        urate = bls.ix[near_zip,'current'].mean()
-        ur_chg = bls.ix[near_zip,'chg12m'].mean()
-        avg_ur = bls.ix[near_zip,'avg'].mean()
-        ur_range = bls.ix[near_zip,'ur_range'].mean()
-    return urate, avg_ur, ur_chg, ur_range 
-
-
-def get_income_data(census, fips_list):
-    # Returns the percentage of census tracts with incomes below $5000/mth, and
-    # the median census tract income for the input FIPS codes
-    # if the census tract doesn't exist (for overseas military, for example), 
-    # return the average for the country.
-    df = census[census.FIPS.isin(fips_list)]
-    if len(df) > 0:
-        result = df.CENINC.median()
-    else:
-        result = census.CENINC.median()
-    
-    return result
-
-
-class APIDataParser(object):
+  
+class FeatureCalculator(object):
+    computed_features = ['credit_length', 'int_pymt', 'revol_bal-loan']
+    required_features = ['earliestCrLine', 'loanAmount']
 
     def __init__(self):
-        self.api_fields = get_loanstats2api_map().values()
-        self.string_converter = StringConverter()
-        self.ok_to_be_null = ['dtiJoint',
-                              'desc',
-                              'isIncVJoint',
-                              'investorCount',
-                              'annualIncJoint',
-                              ]
+        pass
 
-    def null_fill_value(self, field):
-        if( field.startswith('mthsSinceLast')
-                or field.startswith('mthsSinceRecent')
-                or field.startswith('moSinRcnt')):
-            return LARGE_INT
-        elif (field.startswith('moSinOld')
-                or field.startswith('num')
-                or field.endswith('Util')
-                or field == 'percentBcGt75'
-                or field == 'bcOpenToBuy'
-                or field == 'empLength'):
-            return NEGATIVE_INT 
-        elif field=='empTitle':
-            return ''
-        else:
-            return None
-    
-    def null_fill_fields(self):
-        return [f for f in self.api_fields if self.null_fill_value(f) is not None]
+    def _required_fields_exist(self, data):
+        if isinstance(data, dict):
+            return all([fld in data.keys() for fld in self.required_features]) 
 
-    def parse(self, data):
-        for k in self.api_fields:
-            if k not in data.keys():
-                print 'Field {} is missing'.format(k)
-       
-        #API empLength is given in months. Convert to years
-        if data['empLength'] not in range(-1, 11):
-            data['empLength'] = min(11, data['empLength'] / 12)
- 
-        for k,v in data.items():
-            if v is None:
-                data[k] = self.null_fill_value(k) 
-                
-            if type(v) in [str, unicode]:
-                if 'String' not in k:
-                    data[k] = self.string_converter.convert(k, v)                
-                    if data[k] != v:
-                        data[u'{}String'.format(k)] = v
+    def compute(self, data):
+        print 'Adding Computed features'
+        if isinstance(data, pd.DataFrame):   #historical data
+            one_year = 365*24*60*60*1e9
+            data['credit_length'] = ((data['issue_d'] - data['earliestCrLine']).astype(int)/one_year)
+            data['credit_length'] = data['credit_length'].apply(lambda x: max(-1,round(x,0)))
+            data['even_loan_amnt'] = data['loanAmount'].apply(lambda x: float(x==round(x,-3)))
+        else:   #API data
+            earliest_credit = dt.strptime(data['earliestCrLine'].split('T')[0],'%Y-%m-%d')
+            seconds_per_year = 365*24*60*60.0
+            data['credit_length'] = (dt.now() - earliest_credit).total_seconds() / seconds_per_year
+            data['even_loan_amount'] = float(data['loanAmount'] == np.round(data['loanAmount'],-3))
 
-            if data[k] is None and k not in self.ok_to_be_null:
-                print 'Field {} has a null value'.format(k)
+        data['int_pymt'] = data['loanAmount'] * data['intRate'] / 1200.0
+        data['revol_bal-loan'] = data['revolBal'] - data['loanAmount']
+        data['pct_med_inc'] = data['annualInc'] / data['census_median_income']
+        data['pymt_pct_inc'] = data['installment'] / data['annualInc'] 
+        data['revol_bal_pct_inc'] = data['revolBal'] / data['annualInc']
+        data['int_pct_inc'] = data['int_pymt'] / data['annualInc'] 
+        data['loan_pct_income'] = data['loanAmount'] / data['annualInc']
+        data['cur_bal-loan_amnt'] = data['totCurBal'] - data['loanAmount'] 
+        data['cur_bal_pct_loan_amnt'] = data['totCurBal'] / data['loanAmount'] 
+        data['mort_bal'] = data['totCurBal'] - data['totalBalExMort']
+        data['mort_pct_credit_limit'] = data['mort_bal'] * 1.0 / data['totHiCredLim']
+        data['mort_pct_cur_bal'] = data['mort_bal'] * 1.0 / data['totCurBal']
+        data['revol_bal_pct_cur_bal'] = data['revolBal'] * 1.0 / data['totCurBal']
 
 
+class FeatureManager(object):
+    '''
+    FeatureManager is responsible for processing the raw API loan data and fully
+    populate the loan dictionary with all fields required by the prepayment and 
+    default models
+    '''
 
-class LocationDataManager(object):
     def __init__(self):
+        self.api_parser = APIDataParser()
+        self.location_manager = LocationDataManager()
+        self.feature_calculator = FeatureCalculator()
 
-        self.bls = load_bls()
-        self.census = load_census_data()
-        self.z2f = defaultdict(lambda :list(), load_z2f())
-        self.z2c = load_z2c()
-        self.z2pc = load_z2primarycity()
-        self.metro = load_metro_housing()
-        self.nonmetro = load_nonmetro_housing()
-
-    def get_zip_features(self, zip3):
-        ''' takes the first three digits of the zip code and returns
-        a dictionary of features for that location'''
-        info = dict()
-        ur, avg_ur, ur_chg, ur_range = get_urate(self.bls, zip3)
-        info['urate'] = ur
-        info['avg_urate'] = avg_ur
-        info['urate_chg'] = ur_chg
-        info['urate_range'] = ur_range
-        info['med_income'] = get_income_data(self.census, self.z2f[zip3])
-        info['primaryCity'] = self.z2pc[zip3]
-        metro_hpa = self.metro.ix[self.z2c[zip3]].dropna()
-        if len(metro_hpa)>0:
-            info['HPA1Yr'] = metro_hpa['1yr'].mean()
-            info['HPA5Yr'] = metro_hpa['5yr'].mean()
-        else:
-            print 'No FHFA data found for zip code {}xx'.format(zip3)
-            info['HPA1Yr'] = 0
-            info['HPA5Yr'] = 0
-        #    nonmetro_hpa = self.nonmetro.ix[[loan['state']]]
-        #    info['HPA1Yr'] = nonmetro_hpa['1yr'].values[0]
-        #    info['HPA5Yr'] = nonmetro_hpa['5yr'].values[0]
-        return info
-
-
-class LogOddsCalculator(object):
-    def __init__(self, log_odds_dict, tok_type):
-        self.log_odds_dict = defaultdict(lambda :0, log_odds_dict)
-        self.tok_type = tok_type
-
-    def calc_log_odds(self, x):
-        if len(x)==0:
-            return 0
-        if self.tok_type=='word':
-            x = x.replace('^','').replace('$','')
-            toks = x.split()
-        else: 
-            tok_len = self.tok_type
-            toks = np.unique([x[i:i+tok_len] for i in range(max(1,len(x)-tok_len+1))])
-        log_odds = np.sum(map(lambda x:self.log_odds_dict[x], toks))
-        return log_odds
- 
-
-
-def construct_loan_dict(grade, term, rate, amount):
-    pmt = np.pmt(rate/1200., term, amount)
-    loan = dict([('grade', grade),('term', term),('monthly_payment', abs(pmt)),
-        ('loan_amount', amount), ('intRate', rate)])
-    return loan
+    def process_new_loan(self, loan):
+        self.api_parser.parse(loan)
+        features = self.location_manager.get_features(loan['addrZip'], loan['addrState'])
+        loan.update(features)
+        self.feature_calculator(loan)
 
 
 
 #TODO: modify this to use the rev_util version of prepayment curves, and adjust the curves
 # by hinge tilting them from month 20 & 30 for 3-year and 5-year loans, resp.
+# Hinge the default curves from month 15 & 20 for 3- and 5-year, resp.
+# Those hinge points roughly match empirical observations for how curves move from
+# one grade to the nearby ones.
 class ReturnCalculator(object):
     def __init__(self, default_curves, prepay_curves):
         self.default_curves = default_curves
@@ -1163,21 +580,24 @@ def estimate_default_curves():
         smoothed_default = scipy.signal.savgol_filter(empirical_default, win , 3)
         smoothed_default = np.maximum(0, smoothed_default) 
         default_curves['{}{}'.format(i[1], i[0])] = list(np.cumsum(smoothed_default))
+        '''
         plt.figure()
         plt.plot(empirical_default, 'b')
         plt.plot(smoothed_default, 'r')
         plt.title(i)
         plt.grid()
         plt.show()
+        '''
 
-    all_grades = list('ABCDEFG')
-    for grade in all_grades:
+    for term in [36,60]:
         plt.figure()
-        plt.plot(default_curves['{}60'.format(grade)], 'b')
-        plt.plot(default_curves['{}36'.format(grade)], 'r')
-        plt.title(grade)
+        for grade in all_grades:
+            data = np.diff(np.r_[[0], default_curves['{}{}'.format(grade,term)]])
+            plt.plot(data)
+        plt.title('Default Curves for Term={}'.format(term))
         plt.grid()
         plt.show()
+
 
     for term in [36,60]:
         plt.figure()
@@ -1403,7 +823,7 @@ def get_external_data():
     # downloads the monthly non-seasonally adjusted employment data, and saves csv files for
     # monthly labor force size, and number of unemployed by fips county code, to use to construct
     # historical employment statistics by zip code for model fitting
-    z2f = json.load(file(os.path.join(reference_dir, 'zip3_fips.json'),'r'))
+    z2f = json.load(file(os.path.join(reference_data_dir, 'zip3_fips.json'),'r'))
 
     #z2f values are lists themselves; this flattens it
     all_fips = []

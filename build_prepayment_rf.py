@@ -13,36 +13,11 @@ import os
 import json
 import lclib
 
+print 'Building Prepayment Random Forest'
 if 'df' not in locals().keys():
     df = lclib.load_training_data()
 
 # decision variables: 
-dv = [
-      'loanAmount', 
-      'intRate', 
-      'installment', 
-      'term',
-      'subGrade', 
-      'purpose', 
-      'homeOwnership', 
-      'dti',
-      'inqLast6Mths', 
-      'mthsSinceLastDelinq',
-      'revolUtil', 
-      'totalAcc', 
-      'credit_length',
-      'even_loan_amnt', 
-      'revol_bal-loan', 
-      'pctlo',
-      'pymt_pct_inc', 
-      'int_pct_inc', 
-      'revol_bal_pct_inc',
-      'urate_chg', 
-      'hpa4',
-      'ficoRangeLow',
-      'loan_pct_income',
-    ]
-
 dv = [
      'accOpenPast24Mths',
      'annualInc',
@@ -68,9 +43,7 @@ dv = [
      'int_pymt',
      'loanAmount',
      'loan_pct_income',
-     'max_urate',
      'med_inc',
-     'min_urate',
      'moSinOldIlAcct',
      'moSinOldRevTlOp',
      'moSinRcntRevTlOp',
@@ -118,11 +91,11 @@ dv = [
      'totalRevHiLim',
      'urate',
      'urate_chg',
-     'urate_range',
      'default_empTitle_alltoks_odds',
-     'prepay_empTitle_alltoks_odds'
+     'prepay_empTitle_alltoks_odds',
+     'empTitle_length'
      ]
-
+pctl = 50
 iv = '12m_prepay'
 extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
                 if tmp not in dv]
@@ -161,7 +134,7 @@ predictions = np.vstack(predictions).T  #loans X trees
 
 test_data = fit_data.ix[~fit_data.in_sample] 
 test_data['prepay_prob'] = pf
-test_data['prepay_prob_65'] = np.percentile(predictions, 65, axis=1)
+test_data['prepay_prob'] = np.percentile(predictions, pctl, axis=1)
 
 test_data['revUtil_grp'] = test_data['revolUtil'].apply(lambda x: min(5, int(x/10)))
 res_data = list()
@@ -207,9 +180,9 @@ fname = os.path.join(lclib.training_data_dir, 'prepay_forest_{}.txt'.format(time
 with open(fname,'w') as f:
     f.write(data_str)
 
-fname = os.path.join(lclib.training_data_dir, 'prepay_variables.txt')
-with open(fname,'w') as f:
-    f.write('\n'.join(dv))
+config = {'inputs': dv, 'pctl': pctl}
+fname = os.path.join(lclib.training_data_dir, 'prepay_model_config.json')
+json.dump(config, open(fname, 'w'))
 
 # pickle the classifier for persistence
 forest_fname = os.path.join(lclib.training_data_dir, 'prepay_risk_model.pkl')

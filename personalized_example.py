@@ -1,17 +1,49 @@
 
-parent_dir = '/Users/marcshivers/LCModel'
 
-lc_tax_email = 'marc.shivers@gmail.com'
-taxable_id = 211xxx15
-taxable_key = 'xxxxxxxxixjEQhgtJJ1y5ObaFeA='
+class MyData(object):
+    parent_dir = '/Users/myLoginName/LCModel'
 
-lc_ira_email = 'marcshivers@gmail.com'
-ira_id = 270xxx86
-ira_key = 'xxxxxxxxRZVR+Uc3xrw7Ky0m+e0='
+    _tax_email = 'your.email@gmail.com'
+    _tax_id = 888888888 
+    _tax_key = 'yourLongRandomString2'
 
-new_loan_key = ira_key  #for fetching new loan data
+    _ira_email = 'your.other.email@gmail.com'
+    _ira_id = 999999999 
+    _ira_key = 'yourLongRandomString2'
 
-email = 'marc.shivers@gmail.com'
-smtp_password = 'xxxxxxxxojsmexyi'  
+    _smtp_email = 'your.email@gmail.com'
+    _smtp_key = 'yoursmtpkey'  
+
+    @classmethod
+    def get_id(cls, account):
+        if account=='tax':
+            return cls._tax_id
+        elif account=='ira':
+            return cls._ira_id
+        else:
+            raise Exception('Invalid account')
+
+    @classmethod
+    def get_email(cls, account):
+        if account=='tax':
+            return cls._tax_email
+        elif account=='ira':
+            return cls._ira_email
+        elif account=='smtp':
+            return cls._smtp_email
+        else:
+            raise Exception('Invalid account')
+
+    @classmethod
+    def get_key(cls, account):
+        if account=='tax':
+            return cls._tax_key
+        elif account=='ira':
+            return cls._ira_key
+        elif account=='smtp':
+            return cls._smtp_key
+        else:
+            raise Exception('Invalid account')
 
 
+p = MyData()

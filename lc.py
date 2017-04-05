@@ -1,5 +1,3 @@
-from lendingclub import LendingClub, LendingClubError
-from lendingclub.filters import SavedFilter
 from datetime import datetime as dt, timedelta as td
 from time import sleep
 from collections import defaultdict
@@ -7,13 +5,117 @@ import numpy as np
 import pandas as pd
 import os
 import copy
-import production_model as model 
+#import production_model as model 
 import lclib
+import emaillib
 import json
 import requests
-import personalized as p
+from personalized import p
+from session import Session
+import utils
 
 log = open(os.path.join(p.parent_dir, 'logfile.txt'), 'a')
+
+
+
+class APIHandler(object):
+
+    def __init__(self, account='ira'):
+        ''' Valid accounts are 'ira' or 'tax' as defined in personalized.py '''
+        self.email = p.get_email(account)
+        self.id = p.get_id(account)
+        self.key = p.get_key(account)
+        self.session = Session(email=self.email) 
+        self.session.authenticate()
+            
+    def get_listed_loans(self, new_only=True):
+        loans = []
+        try:
+            result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
+                                  headers={'Authorization': self.key},
+                                  params={'showAll': not new_only})
+            if result.status_code == 200:  #success
+                result_js = result.json()
+                if 'loans' in result_js.keys():
+                    loans = result.json()['loans']
+        except:
+            pass
+        return loans
+
+    def get_cash_balance(self):
+        cash = -1
+        url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/availablecash'.format(self.id)
+        try:
+            result = requests.get(url, headers={'Authorization': self.key})
+            if result.status_code == 200:  #success
+                result_js = result.json()
+                if 'availableCash' in result_js.keys():
+                    cash = result.json()['availableCash']
+        except:
+            pass
+        return cash 
+    
+    def get_notes_owned(self):
+        notes = []
+        url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/detailednotes'.format(self.id)
+        result = requests.get(url, headers={'Authorization': self.key})
+        if result.status_code == 200:  #success
+            result_js = result.json()
+            if 'myNotes' in result_js.keys():
+                notes = result.json()['myNotes']
+        return notes
+
+
+    def stage_order(self, loan_id, amount):
+        amount_staged = 0
+        payload = {
+            'method': 'addToPortfolio',
+            'loan_id': loan_id,
+            'loan_amount': int(amount),
+            'remove': 'false'
+        }
+        try:
+            response = self.session.get('/data/portfolio', query=payload)
+            json_response = response.json()
+        except:
+            log.write('{}: Failed prestage orders\n'.format(dt.now()))
+            print '\nFailed to prestage order {}\n'.format(loan_id)
+            return 0
+
+        if json_response['result']=='success':
+            if 'add_modifications' in json_response.keys():
+                mod = json_response['add_modifications']
+                if 'loanFractions' in mod.keys():
+                    frac = mod['loanFractions']
+                    if isinstance(frac, list):
+                        frac = frac[0]
+                    if isinstance(frac, dict) and 'loanFractionAmountAdded' in frac.keys():
+                        amount_staged =  frac['loanFractionAmountAdded'] 
+            else:
+                amount_staged = amount
+        return amount_staged 
+
+    def get_loan_details(self, loan_id):
+        '''
+        Returns the loan details, including location, current job title, 
+        employer, relisted status, and number of inquiries.
+        '''
+        payload = {
+            'loan_id': loan_id
+        }
+        try:
+            response = self.session.post('/browse/loanDetailAj.action', data=payload)
+            detail = response.json()
+            return detail 
+        except:
+            return -1
+
+    def get_employer_name(self, loan_id):
+        currentCompany = ''
+        result = self.get_loan_details(loan_id)
+        if isinstance(result, dict):
+            currentCompany = utils.only_ascii(result['currentCompany'])
+        return currentCompany
 
 
 class Loan(object):
@@ -33,90 +135,10 @@ class Loan(object):
                       'email_details': False
                       }
 
-    def _validate(self):
-        '''verify that the api data is complete'''
-
-        loan['currentCompany'] = '' #currentCompany data not exposed via API
-        if loan['empTitle']==None: loan['empTitle'] = 'n/a'
-        if loan['mthsSinceLastDelinq']==None: loan['mthsSinceLastDelinq'] = lclib.LARGE_INT
-        if loan['mthsSinceLastMajorDerog']==None: loan['mthsSinceLastMajorDerog'] = lclib.LARGE_INT
-        if loan['mthsSinceLastRecord']==None: loan['mthsSinceLastRecord'] = lclib.LARGE_INT
-        if loan['empLength']==None: loan['empLength'] = 0 
-        loan['empTitle'] = lclib.only_ascii(loan['empTitle']).replace('|', '/')  #for saving the data
-        loan['currentJobTitle'] = loan['empTitle'].strip()
-        
-        loan['emp_title'] = loan['currentJobTitle'].replace('n/a','Blank')
-
-        loan['int_rate'] = float(loan['intRate'])
-        loan['loan_amount'] = float(loan['loanAmount'])
-        loan['annual_income'] = float(loan['annualInc'])
-        loan['monthly_payment'] = float(loan['installment'])
-        loan['revol_bal'] = float(loan['revolBal'])
-        loan['loan_term'] = float(loan['term'])
-        loan['dti'] = float(loan['dti'])
-        loan['delinq_2yrs'] = float(loan['delinq2Yrs'])
-        loan['fico_score'] = float(loan['ficoRangeLow'])
-        loan['zip3'] = float(loan['addrZip'][:3])
-        loan['state'] = loan['addrState']
-        loan['inq_last_6mths'] = float(loan['inqLast6Mths'])
-        
-        loan['mths_since_last_major_derog'] = float(loan['mthsSinceLastMajorDerog'])
-        loan['mths_since_last_delinq'] = float(loan['mthsSinceLastDelinq'])
-        loan['mths_since_last_record'] = float(loan['mthsSinceLastRecord'])
-        loan['open_acc'] = float(loan['openAcc'])
-        loan['pub_rec'] = float(loan['pubRec'])
-        loan['revol_util'] = float(loan['revolUtil'])
-        loan['total_acc'] = float(loan['totalAcc'])
-        loan['is_inc_verified'] = lclib.api_verification_dict[loan['isIncV']]
-
-        loan['subgrade_number'] = lclib.subgrade_map[loan['subGrade']]
-        loan['purpose_number'] = lclib.purpose_mapping(loan['purpose'])
-        loan['emp_length'] = loan['empLength']/12.0
-        loan['home_status_number'] = lclib.home_map[loan['homeOwnership'].upper()]
-
-
-        loan['api_details_parsed'] = True
-
-
-
+ 
 class Inventory(object):
     def __init__(self):
         self.loans = list()
-
-
-
-
-
-def stage_order_fast(lc, id, amount):
-    # Stage each loan
-    amount_staged = 0
-    payload = {
-        'method': 'addToPortfolio',
-        'loan_id': id,
-        'loan_amount': int(amount),
-        'remove': 'false'
-    }
-    try:
-        response = lc.session.get('/data/portfolio', query=payload)
-        json_response = response.json()
-    except:
-        log.write('{}: Failed prestage orders\n'.format(dt.now()))
-        print '\nFailed to prestage order {}\n'.format(id)
-        return 0
-
-    if json_response['result']=='success':
-        if 'add_modifications' in json_response.keys():
-            mod = json_response['add_modifications']
-            if 'loanFractions' in mod.keys():
-                frac = mod['loanFractions']
-                if isinstance(frac, list):
-                    #print 'Loan Fraction was a list: {}'.format(frac)
-                    frac = frac[0]
-                if isinstance(frac, dict) and 'loanFractionAmountAdded' in frac.keys():
-                    amount_staged =  frac['loanFractionAmountAdded'] 
-        else:
-            amount_staged = amount
-    return amount_staged 
 
 
 def get_staged_employer_data(lc, known_loans):
@@ -125,7 +147,7 @@ def get_staged_employer_data(lc, known_loans):
         if (loan['staged_amount'] > 0) and (loan['currentCompany'] == ''):
             result = lclib.get_loan_details(lc, loan['id'])
             if isinstance(result, dict):
-                loan['currentCompany'] = lclib.only_ascii(result['currentCompany'])
+                loan['currentCompany'] = utils.only_ascii(result['currentCompany'])
                 print '{} at {}'.format(loan['currentJobTitle'], loan['currentCompany'])
     print '\n'
 
@@ -181,32 +203,6 @@ def calc_model_sensitivities(loans):
         loan['dflt_not_even_loan_amount'] = model.calc_default_risk(loancopy)        
 
     return
-
-
-
-def get_employer_data(lc, loans):
-    print '\n'
-    for loan in loans.values():
-        if loan['currentCompany'] == '':
-            result = lclib.get_loan_details(lc, loan['id'])
-            if isinstance(result, dict):
-                loan['currentCompany'] = lclib.only_ascii(result['currentCompany'])
-                print '{} at {}'.format(loan['currentJobTitle'], loan['currentCompany'])
-    print '\n'
-
-
-def get_new_loans_REST():
-    loans = []
-    try:
-        result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
-                              headers={'Authorization': p.new_loan_key})
-        if result.status_code == 200:  #success
-            result_js = result.json()
-            if 'loans' in result_js.keys():
-                loans = result.json()['loans']
-    except:
-        pass
-    return loans
 
 
 def add_to_known_loans(known_loans, new_loans):
@@ -306,18 +302,6 @@ def attempt_to_stage(lc, known_loans):
     return staged_loans
 
 
-def login(lc_ira, lc_tax):
-    import getpass
-
-    pw = getpass.getpass('Password:')
-    print '\nLogging in...'
-    lc_ira.authenticate(email=p.lc_ira_email, password=pw)
-    lc_tax.authenticate(email=p.lc_tax_email, password=pw)
-
-
-lc_ira = LendingClub()
-lc_tax = LendingClub()
-
 def main(min_irr=8, max_invest=500):
     init_dt = dt.now() 
     known_loans = dict()
@@ -369,7 +353,7 @@ def main(min_irr=8, max_invest=500):
                     stress_irr = model.irr_calculator.calc_irr(loan, loan['default_max'], loan['prepay_max'])
                     loan['stress_irr'], loan['stress_irr_tax'] = stress_irr
 
-                    lclib.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 
+                    utils.invest_amount(loan,  min_irr=min_irr/100., max_invest=max_invest) 
 
                     # Don't invest in loans that were already passed over as whole loans
                     if loan['initialListStatus']=='W':
@@ -397,7 +381,7 @@ def main(min_irr=8, max_invest=500):
                                                                       loan['emp_title']) 
                                                                
                             
-                print '\n{}:\n{}\n'.format(dt.now(), lclib.detail_str(loan))
+                print '\n{}:\n{}\n'.format(dt.now(), emaillib.detail_str(loan))
         
         if len(new_ids)==0:   # get employer data if no new loans
             update_recent_loan_info(known_loans, info)
@@ -406,7 +390,7 @@ def main(min_irr=8, max_invest=500):
                 print 'Staged Loan Employers:'
                 get_staged_employer_data(lc_tax, known_loans)
                 calc_model_sensitivities(staged_loans)
-                lclib.email_details(email, staged_loans, info)
+                emaillib.email_details(email, staged_loans, info)
             num_recently_staged = len(staged_loans)
             print '{} Loans newly staged; {} recently staged.'.format(num_newly_staged, num_recently_staged)
             print '{} total loans found, valued at ${:1,.0f}.'.format(num_new_loans, value_new_loans)
@@ -418,7 +402,7 @@ def main(min_irr=8, max_invest=500):
                 lclib.save_loan_info(loans_to_save)
 
             # sleep for up to 10 minutes and try again.
-            sleep_seconds = lclib.sleep_seconds(win_len=1)
+            sleep_seconds = utils.sleep_seconds(win_len=1)
             if len(loans_to_evaluate) > 0:
                 sleep_seconds = min(sleep_seconds, 30)
             if sleep_seconds > 60:
@@ -430,7 +414,7 @@ def main(min_irr=8, max_invest=500):
                     print 'Tax cash balance is ${}'.format(cash_tax)
                 except:
                     print '{}: Failed to get cash balance'.format(dt.now()) 
-                lclib.reset_time()
+                utils.reset_time()
         else:
             sleep_seconds = 0
             sleep_str = 'No sleeping!'

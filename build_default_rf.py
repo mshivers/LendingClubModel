@@ -13,6 +13,7 @@ import os
 import json
 from lclib import training_data_dir, reference_data_dir, load_training_data
 
+print 'Building Default Random Forest'
 if 'df' not in locals().keys():
     df = load_training_data()
 
@@ -42,9 +43,7 @@ dv = [
      'int_pymt',
      'loanAmount',
      'loan_pct_income',
-     'max_urate',
      'med_inc',
-     'min_urate',
      'moSinOldIlAcct',
      'moSinOldRevTlOp',
      'moSinRcntRevTlOp',
@@ -92,10 +91,11 @@ dv = [
      'totalRevHiLim',
      'urate',
      'urate_chg',
-     'urate_range',
      'default_empTitle_alltoks_odds',
      'prepay_empTitle_alltoks_odds',
+     'empTitle_length'
      ]
+pctl = 65
 
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
@@ -126,7 +126,7 @@ predictions = np.vstack(predictions).T  #loans X trees
 
 test_data = fit_data.ix[~fit_data.in_sample] 
 test_data['default_prob'] = pf
-test_data['default_prob_65'] = np.percentile(predictions, 65, axis=1)
+test_data['default_prob_65'] = np.percentile(predictions, pctl, axis=1)
   
 res_data = list()
 grp = test_data.groupby(['grade', 'term'])
@@ -172,9 +172,9 @@ fname = os.path.join(training_data_dir, 'default_forest_{}.txt'.format(time_str)
 with open(fname,'w') as f:
     f.write(data_str)
 
-fname = os.path.join(training_data_dir, 'default_variables.txt')
-with open(fname,'w') as f:
-    f.write('\n'.join(dv))
+config = {'inputs': dv, 'pctl': pctl}
+fname = os.path.join(training_data_dir, 'default_model_config.json')
+json.dump(config, open(fname, 'w'))
 
 # pickle the classifier for persistence
 forest_fname = os.path.join(training_data_dir, 'default_risk_model.pkl')

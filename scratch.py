@@ -1,19 +1,10 @@
-sample = (df.in_sample)
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_prepay', tok='alltoks')
+import lc, lclib, data_classes
 
-1/0
-sample = (df.grade>=2) & (df.in_sample)
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='alltoks')
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok=6)
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok=7)
-add_log_odds_feature(df, sample, string_fld='clean_title', numeric_fld='12m_wgt_default', tok=4)
-add_log_odds_feature(df, sample, string_fld='title_capitalization', numeric_fld='12m_wgt_default', tok=4)
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='word')
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_wgt_default', tok='phrase')
+session = lc.APIHandler()
+loans = session.get_listed_loans()
+fm = lclib.FeatureManager()
+fc = lclib.FeatureCalculator()
 
-sample = (df.in_sample)
-add_log_odds_feature(df, sample, string_fld='clean_title', numeric_fld='12m_prepay', tok=4)
-add_log_odds_feature(df, sample, string_fld='empTitle', numeric_fld='12m_prepay', tok='word')
 
 
 '''
