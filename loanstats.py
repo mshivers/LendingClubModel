@@ -29,6 +29,11 @@ def load_training_data(regen=False):
         df = load_training_data()
     return df
 
+def load_base_data():
+    fname = paths.get_file('training')
+    df = pd.read_csv(paths.get_file('base'), header=0, index_col=0)
+    return df
+
 def cache_base_data():
     '''This assembles the LC data and adds standard fields that don't change'''
     #rename columns to match API fields
@@ -162,7 +167,7 @@ def cache_base_data():
 
 def update_training_data(df=None):
     if df is None:
-        df = pd.read_csv(paths.get_file('base'), header=0, index_col=0)
+        df = load_base_data() 
         print 'Dataframes imported'
   
     # process job title features

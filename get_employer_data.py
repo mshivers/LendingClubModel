@@ -1,4 +1,4 @@
-from lc import APIHandler
+from lclib import LendingClub 
 import getpass
 import utils
 import os
@@ -23,7 +23,7 @@ def random_sleep():
         print 'Overnight Sleep of {} HOURS'.format(overnight_time/(60*60.))
         sleep(overnight_time)
     else:
-        mean = 2.0 + 2.0 * np.random.rand()
+        mean = 2.0 + 1.0 * np.random.rand()
         exp_mean = np.random.choice(1.0 / np.linspace(1/100., 2, 1000)) 
         short_time = mean + np.random.exponential(exp_mean)
         if short_time < 60:
@@ -40,7 +40,7 @@ def random_sleep():
 
 def update():
     
-    account = APIHandler('tax') 
+    account = LendingClub('tax') 
 
     emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/combined_data.txt')
     remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/remaining_ids.txt')

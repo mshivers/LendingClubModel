@@ -1,8 +1,4 @@
 
-import lc, lclib, datalib
-model_path = datalib.PathManager.get_dir('training') 
-investor = lc.Investor(model_path)
-investor.check_for_new_loans()
 
 '''
 #test_data = fit_data.ix[~fit_data.in_sample] 

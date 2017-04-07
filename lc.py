@@ -1,8 +1,6 @@
 from datetime import datetime as dt, timedelta as td
 from time import sleep
-from collections import defaultdict
 import numpy as np
-import pandas as pd
 import os
 import copy
 #import production_model as model 
@@ -13,11 +11,16 @@ import requests
 from personalized import p
 from session import Session
 import utils
+import constants
+import invest
 
 log = open(os.path.join(p.parent_dir, 'logfile.txt'), 'a')
 
 
 
+model_path = constants.PathManager.get_dir('training') 
+investor = invest.Investor(model_path)
+investor.check_for_new_loans()
 
 def main(min_irr=8, max_invest=500):
     init_dt = dt.now() 

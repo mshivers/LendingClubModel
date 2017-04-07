@@ -11,8 +11,8 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-from datalib import PathManager as paths
-from lclib import load_training_data
+from constants import PathManager as paths
+from loanstats import load_training_data
 
 print 'Building Default Random Forest'
 if 'df' not in locals().keys():

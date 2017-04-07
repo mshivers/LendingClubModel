@@ -1,4 +1,6 @@
 import datalib
+from collections import defaultdict
+import pandas as pd
 
 class FeatureManager(object):
     '''
@@ -128,9 +130,11 @@ class OddsFeature(object):
         summary = grp.agg(['sum', 'count'])['values']
         for string, row in summary.iterrows():
             tokens = self.get_tokens(string)
+            val_incr = row['sum']
+            count_incr = row['count']
             for tok in tokens:
-                value_sum[tok] += row['sum']
-                tok_count[tok] += row['count']
+                value_sum[tok] += val_incr 
+                tok_count[tok] += count_incr 
 
         C = 500.0
         tok_count = pd.Series(tok_count)
