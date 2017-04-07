@@ -11,14 +11,14 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-from lclib import training_data_dir, reference_data_dir, load_training_data
+from datalib import PathManager as paths
+from lclib import load_training_data
 
 print 'Building Default Random Forest'
 if 'df' not in locals().keys():
     df = load_training_data()
 
 # decision variables: 
-
 dv = [
      'accOpenPast24Mths',
      'annualInc',
@@ -26,6 +26,7 @@ dv = [
      'avg_urate',
      'bcOpenToBuy',
      'bcUtil',
+     'census_median_income',
      'credit_length',
      'cur_bal-loan_amnt',
      'cur_bal_pct_loan_amnt',
@@ -41,9 +42,9 @@ dv = [
      'intRate',
      'int_pct_inc',
      'int_pymt',
+     'isIncV',
      'loanAmount',
      'loan_pct_income',
-     'med_inc',
      'moSinOldIlAcct',
      'moSinOldRevTlOp',
      'moSinRcntRevTlOp',
@@ -69,7 +70,7 @@ dv = [
      'numSats',
      'numTlOpPast12m',
      'pctTlNvrDlq',
-     'pct_med_inc',
+     'inc_pct_med_inc',
      'percentBcGt75',
      'pubRecBankruptcies',
      'purpose',
@@ -93,14 +94,22 @@ dv = [
      'urate_chg',
      'default_empTitle_alltoks_odds',
      'prepay_empTitle_alltoks_odds',
-     'empTitle_length'
+     'empTitle_length',
+     'empTitle_frequency',
      ]
 pctl = 65
 
 iv = '12m_wgt_default'
 extra_cols = [tmp for tmp in [iv, 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
                 if tmp not in dv]
-fit_data = df.ix[:,dv+extra_cols]
+required_cols = dv + extra_cols
+
+#Check that all the columns exist:
+for col in required_cols:
+    if col not in df.columns:
+        print col, 'is not in the cached data'
+
+fit_data = df.ix[:,required_cols]
 fit_data = fit_data.dropna()
 
 finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<np.inf
@@ -168,15 +177,16 @@ data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
 print data_str
 
 time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
-fname = os.path.join(training_data_dir, 'default_forest_{}.txt'.format(time_str))
+fname = os.path.join(paths.get_dir('training'), 'default_forest_{}.txt'.format(time_str))
 with open(fname,'w') as f:
     f.write(data_str)
 
-config = {'inputs': dv, 'pctl': pctl}
-fname = os.path.join(training_data_dir, 'default_model_config.json')
-json.dump(config, open(fname, 'w'))
+pkl_file_name = 'default_randomforest.pkl'
+config = {'inputs': dv, 'pctl': pctl, 'pkl_filename':pkl_file_name, 'feature_name':'default_risk'}
+fname = os.path.join(paths.get_dir('training'), 'default_randomforest.json')
+json.dump(config, open(fname, 'w'), indent=4)
 
 # pickle the classifier for persistence
-forest_fname = os.path.join(training_data_dir, 'default_risk_model.pkl')
+forest_fname = os.path.join(paths.get_dir('training'), pkl_file_name) 
 joblib.dump(forest, forest_fname, compress=3)
 

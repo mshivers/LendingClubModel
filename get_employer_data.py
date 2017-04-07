@@ -13,18 +13,18 @@ def random_sleep():
     rand = np.random.randint(0,1000)
     #make it more likely to sleep at night
     hour = dt.now().hour
-    if hour <= 5:
-        rand += 10  
+    if hour < 5:
+        rand += 1  
     else:
         rand -= 1 
 
     if rand > 999: 
-        overnight_time= np.random.choice(np.arange(5))*60*60 + np.random.exponential(1*60*60.)
+        overnight_time= 1*60*60 + np.random.exponential(1*60*60.)
         print 'Overnight Sleep of {} HOURS'.format(overnight_time/(60*60.))
         sleep(overnight_time)
     else:
-        mean = np.random.choice(range(2,6))
-        exp_mean = np.random.choice(1.0 / np.linspace(1/600., 2, 1000)) 
+        mean = 2.0 + 2.0 * np.random.rand()
+        exp_mean = np.random.choice(1.0 / np.linspace(1/100., 2, 1000)) 
         short_time = mean + np.random.exponential(exp_mean)
         if short_time < 60:
             print 'Short sleep of {} seconds'.format(short_time)

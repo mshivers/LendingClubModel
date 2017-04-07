@@ -63,21 +63,6 @@ def get_late_loans(loans):
         'principalPending', 'grade', 'interestRate','loanLength', 'paymentsReceived', 'creditTrend']]
 
 
-def default_wgt(note):
-    wgt = 0
-    if note['loanStatus'] == 'Charged Off':
-        wgt = 1.0
-    elif note['loanStatus'] == 'Default':
-        wgt = 0.89
-    elif note['loanStatus'] == 'Late (31-120 days)':
-        wgt = 0.74
-    elif note['loanStatus'] == 'Late (16-30 days)':
-        wgt = 0.58
-    elif note['loanStatus'] == 'In Grace Period':
-        wgt = 0.28
-    return wgt
-
-
 def monthly_payment(loan, rate, term):
     i = float(rate)/100/12
     return loan * i * (1+i)**term / ((1+i)**term - 1)
@@ -110,7 +95,8 @@ def total_interest_received(notes, num_months=None):
             total_interest += min(n['interestReceived'],exp_interest)
         return total_interest
 
-
+from lclib import DefaultProb
+default_wgt = lambda n :DefaultProb.by_status(n['loanStatus'])
 def expected_write_offs(notes, num_months=None):
     if num_months == None:
         return sum([default_wgt(n) * n['principalPending'] for n in notes if n['issueDate'] is not None])

@@ -123,7 +123,7 @@ class Session(object):
             email = raw_input('Email:')
             self.email = email
         if password is None:
-            password = getpass.getpass()
+            password = getpass.getpass('Password for {}: '.format(self.email))
             self.__pass = password
 
         self.__log('Attempting to authenticate: {0}'.format(self.email))

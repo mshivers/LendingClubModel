@@ -11,11 +11,12 @@ import itertools as it
 from collections import Counter, defaultdict
 import os
 import json
-import lclib
+from datalib import PathManager as paths
+from lclib import load_training_data
 
 print 'Building Prepayment Random Forest'
 if 'df' not in locals().keys():
-    df = lclib.load_training_data()
+    df = load_training_data()
 
 # decision variables: 
 dv = [
@@ -25,7 +26,7 @@ dv = [
      'avg_urate',
      'bcOpenToBuy',
      'bcUtil',
-     'clean_title_rank',
+     'census_median_income',
      'credit_length',
      'cur_bal-loan_amnt',
      'cur_bal_pct_loan_amnt',
@@ -41,9 +42,9 @@ dv = [
      'intRate',
      'int_pct_inc',
      'int_pymt',
+     'isIncV',
      'loanAmount',
      'loan_pct_income',
-     'med_inc',
      'moSinOldIlAcct',
      'moSinOldRevTlOp',
      'moSinRcntRevTlOp',
@@ -69,7 +70,7 @@ dv = [
      'numSats',
      'numTlOpPast12m',
      'pctTlNvrDlq',
-     'pct_med_inc',
+     'inc_pct_med_inc',
      'percentBcGt75',
      'pubRecBankruptcies',
      'purpose',
@@ -93,8 +94,10 @@ dv = [
      'urate_chg',
      'default_empTitle_alltoks_odds',
      'prepay_empTitle_alltoks_odds',
-     'empTitle_length'
+     'empTitle_length',
+     'empTitle_frequency',
      ]
+
 pctl = 50
 iv = '12m_prepay'
 extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
@@ -176,16 +179,18 @@ data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
 print data_str
 
 time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
-fname = os.path.join(lclib.training_data_dir, 'prepay_forest_{}.txt'.format(time_str))
+
+fname = os.path.join(paths.get_dir('training'), 'prepay_forest_{}.txt'.format(time_str))
 with open(fname,'w') as f:
     f.write(data_str)
 
-config = {'inputs': dv, 'pctl': pctl}
-fname = os.path.join(lclib.training_data_dir, 'prepay_model_config.json')
-json.dump(config, open(fname, 'w'))
+pkl_file_name = 'prepay_randomforest.pkl'
+config = {'inputs': dv, 'pctl': pctl, 'pkl_filename':pkl_file_name, 'feature_name': 'prepay_risk'}
+fname = os.path.join(paths.get_dir('training'), 'prepay_randomforest.json')
+json.dump(config, open(fname, 'w'), indent=4)
 
 # pickle the classifier for persistence
-forest_fname = os.path.join(lclib.training_data_dir, 'prepay_risk_model.pkl')
+forest_fname = os.path.join(paths.get_dir('training'), pkl_file_name) 
 joblib.dump(forest, forest_fname, compress=3)
 
 

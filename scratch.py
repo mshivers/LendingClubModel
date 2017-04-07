@@ -1,14 +1,10 @@
-import lc, lclib, data_classes
 
-session = lc.APIHandler()
-loans = session.get_listed_loans()
-fm = lclib.FeatureManager()
-fc = lclib.FeatureCalculator()
-
-
+import lc, lclib, datalib
+model_path = datalib.PathManager.get_dir('training') 
+investor = lc.Investor(model_path)
+investor.check_for_new_loans()
 
 '''
-
 #test_data = fit_data.ix[~fit_data.in_sample] 
 #predictions = [tree.predict(x_test) for tree in forest.estimators_]
 #predictions = np.vstack(predictions).T  #loans X trees

@@ -6,202 +6,76 @@ import numpy as np
 from datetime import datetime as dt
 from datetime import timedelta as td
 from collections import defaultdict, Counter
-import scipy.signal
-from matplotlib import pyplot as plt
-import utils
 from personalized import p
-
-class PathManager(object):
-    data_dir = os.path.join(p.parent_dir, 'data')
-    loanstats_dir = os.path.join(p.parent_dir, 'data/loanstats')
-    training_data_dir = os.path.join(p.parent_dir, 'data/training_data')
-    reference_data_dir = os.path.join(p.parent_dir, 'data/reference_data')
-    bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
-    fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
-    saved_prod_data_dir = os.path.join(p.parent_dir, 'data/saved_prod_data')
-    payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170315.csv')
-    cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
-
-    def __init__(self):
-        pass
-   
-    @classmethod
-    def get_dir(cls, item):
-        if item=='loanstats':
-            return cls.loanstats_dir
-        elif item=='training':
-            return cls.training_data_dir
-        elif item=='reference':
-            return cls.reference_data_dir
-        elif item=='bls':
-            return cls.bls_data_dir
-        elif item=='fhfa':
-            return cls.fhfa_data_dir
-        elif item=='training':
-            return cls.training_data_dir
-        else:
-            return -1
-
-    @classmethod
-    def get_filepath(cls, item):
-        if item=='payments':
-            return cls.payments_file
-        elif item in ['training', 'training_cache', 'training_data']:
-            return cls.cached_training_data_file
-        else:
-            return -1
-
-# clean dataframe
-class StringToNumberConverter(object):
-    def __init__(self):
-        self.accepted_fields = ['homeOwnership',
-                                'purpose',
-                                'grade',
-                                'subGrade',
-                                'isIncV', 
-                                'isIncVJoint',
-                                'initialListStatus',
-                                'empLength',
-                                'addrZip',
-                                'empTitle']
-        self.home_map = dict([('ANY', 0), ('NONE',0), ('OTHER',0), 
-                              ('RENT',1), ('MORTGAGE',2), ('OWN',3)])
-        self.purpose_dict = defaultdict(lambda :np.nan)
-        self.purpose_dict.update([('credit_card', 0), ('credit_card_refinancing', 0), 
-                                  ('debt_consolidation',1), 
-                                  ('home_improvement',2), 
-                                  ('car',3), ('car_financing',3), 
-                                  ('educational',4), 
-                                  ('house',5), ('home_buying',5),
-                                  ('major_purchase',6), 
-                                  ('medical_expenses',7), ('medical',7), 
-                                  ('moving',8), ('moving_and_relocation',8), 
-                                  ('other',9),
-                                  ('renewable_energy',10), ('green_loan',10),
-                                  ('business',11),('small_business',11),
-                                  ('vacation',12), 
-                                  ('wedding',13)])
-        grades = list('ABCDEFG')
-        self.grade_map = defaultdict(lambda :np.nan, zip(grades, range(len(grades))))
-        subgrades = ['{}{}'.format(l,n) for l in 'ABCDEFG' for n in range(1,6)]
-        self.subgrade_map = defaultdict(lambda :np.nan, zip(subgrades, range(len(subgrades))))
-        loanstats_verification_dict = dict([('Verified',2), ('Source Verified',1), ('Not Verified',0)]) 
-        api_verification_dict = dict([('VERIFIED',2), ('SOURCE_VERIFIED',1), ('NOT_VERIFIED',0)])
-        self.income_verification = loanstats_verification_dict
-        self.income_verification.update(api_verification_dict)
-        self.init_status_dict = dict([('f',0), ('F',0), ('w',1), ('W',1)])
-
-    def _convert_empLength(self, value):
-        value=value.replace('< 1 year', '0')
-        value=value.replace('1 year','1')
-        value=value.replace('10+ years', '11')
-        value=value.replace('n/a', '-1')
-        value=value.replace(' years', '')
-        return int(value)
-    
-    def _convert_grade(self, value):
-        return self.grade_map[value]
-
-    def _convert_homeOwnership(self, value):
-        return self.home_map[value.upper()]
-
-    def _convert_purpose(self, value):
-        value = value.lower().replace(' ', '_')
-        return self.purpose_dict[value]
-
-    def _convert_subGrade(self, value):
-        return self.subgrade_map[value]
-
-    def _convert_inc_verification(self, value):
-        return self.income_verification[value]
-
-    def _convert_initialListStatus(self, value):
-        return self.init_status_dict[value]
-
-    def _convert_addrZip(self, value):
-        return int(value[:3])
-
-    def _convert_empTitle(self, value):
-        return '^{}$'.format(utils.only_ascii(value))
-         
-    def convert(self, field, value):
-        if field == 'homeOwnership':
-            if value.upper() in self.home_map.keys():
-                return self.home_map[value.upper()]
-        elif field == 'purpose':
-            value = value.lower().replace(' ', '_')
-            if value in self.purpose_dict.keys():
-                return self.purpose_dict[value]
-        elif field == 'grade':
-            if value in self.grade_map.keys():
-                return self.grade_map[value]
-        elif field == 'subGrade':
-            if value in self.subgrade_map.keys():
-                return self.subgrade_map[value]
-        elif field in ['isIncV', 'isIncVJoint']:
-            if value in self.income_verification.keys():
-                return self.income_verification[value]
-        elif field == 'initialListStatus':
-            if value in self.init_status_dict.keys():
-                return self.init_status_dict[value]
-        elif field == 'empLength':
-            return self._convert_empLength(value)
-        elif field == 'addrZip':
-            return int(value[:3])
-        elif field == 'empTitle':
-            return self._convert_empTitle(value) 
-        else:
-            return value
-
+from constants import PathManager
 
 class FHFAData(object):
+    _data_dir = PathManager.get_dir('fhfa')
+    _metro_data = None
+    _nonmetro_data = None
+
     def __init__(self):
-        pass
+        self._load_metro_data()
+        self._load_nonmetro_data()
 
-    def load_nonmetro_housing():
-        link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
-        try:
-            data = pd.read_excel(link, skiprows=2)
-            data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_nonmetro.csv'))
-        except:
-            data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_nonmetro.csv'))
-            print '{}: Failed to load FHFA nonmetro data; using cache\n'.format(dt.now())
+    @classmethod
+    def get_metro_data(cls):
+        return cls._metro_data
 
-        grp = data.groupby('State')
-        tail5 = grp.tail(21).groupby('State')['Index']
-        chg5 = np.log(tail5.last()) - np.log(tail5.first())
-        tail1 = grp.tail(5).groupby('State')['Index']
-        chg1 = np.log(tail1.last()) - np.log(tail1.first())
-        chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
-        return chg
+    @classmethod
+    def get_nonmetro_data(cls):
+        return cls._nonmetro_data
 
-    def load_metro_housing():
-        # loads the fhfa home price quarterly index data for Census Bureau
-        # Statistical Areas
-        link = "http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_metro.csv"
-        cols = ['Location','CBSA', 'yr','qtr','index', 'stdev']
-        try:
-            data = pd.read_csv(link, header=None, names=cols)
-            data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_metro.csv'))
-        except:
-            data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_metro.csv'), skiprows=1, header=None, names=cols)
-            print '{}: Failed to load FHFA metro data; using cache\n'.format(dt.now())
-        data = data[data['index']!='-']
-        data['index'] = data['index'].astype(float)
-        grp = data.groupby('CBSA')[['Location','CBSA', 'yr','qtr','index', 'stdev']]
-        tail5 = grp.tail(21).groupby(['CBSA','Location'])['index']
-        chg5 = np.log(tail5.last()) - np.log(tail5.first())
-        tail1 = grp.tail(5).groupby(['CBSA','Location'])['index']
-        chg1 = np.log(tail1.last()) - np.log(tail1.first())
-        chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
-        chg = chg.reset_index(1)
-        return chg
+    @classmethod
+    def _load_nonmetro_data(cls):
+        ''' Loads the state-wide nonmetro area house price index data from the FHFA'''
+        if cls._nonmetro_data is None:
+            link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
+            try:
+                data = pd.read_excel(link, skiprows=2)
+                data.to_csv(os.path.join(cls._data_dir, 'HPI_AT_nonmetro.csv'))
+            except:
+                data = pd.read_csv(os.path.join(cls._data_dir,'HPI_AT_nonmetro.csv'))
+                print '{}: Failed to load FHFA nonmetro data; using cache\n'.format(dt.now())
+
+            grp = data.groupby('State')
+            tail5 = grp.tail(21).groupby('State')['Index']
+            chg5 = np.log(tail5.last()) - np.log(tail5.first())
+            tail1 = grp.tail(5).groupby('State')['Index']
+            chg1 = np.log(tail1.last()) - np.log(tail1.first())
+            chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
+            cls._nonmetro_data = chg 
+
+    @classmethod
+    def _load_metro_data(cls):
+        ''' Loads the FHFA metro area home price quarterly index data for Census Bureau
+        Statistical Areas (CBSA) '''
+        if cls._metro_data is None:
+            link = "http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_metro.csv"
+            cols = ['Location','CBSA', 'yr','qtr','index', 'stdev']
+            try:
+                data = pd.read_csv(link, header=None, names=cols)
+                data.to_csv(os.path.join(cls._data_dir, 'HPI_AT_metro.csv'))
+            except:
+                data = pd.read_csv(os.path.join(cls._data_dir,'HPI_AT_metro.csv'), skiprows=1, header=None, names=cols)
+                print '{}: Failed to load FHFA metro data; using cache\n'.format(dt.now())
+            data = data[data['index']!='-']
+            data['index'] = data['index'].astype(float)
+            grp = data.groupby('CBSA')[['Location','CBSA', 'yr','qtr','index', 'stdev']]
+            tail5 = grp.tail(21).groupby(['CBSA','Location'])['index']
+            chg5 = np.log(tail5.last()) - np.log(tail5.first())
+            tail1 = grp.tail(5).groupby(['CBSA','Location'])['index']
+            chg1 = np.log(tail1.last()) - np.log(tail1.first())
+            chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
+            chg = chg.reset_index(1)
+            cls._metro_data = chg
 
     
 # Get unemployment rates by County (one-year averages)
 class CurrentBLSData(object):
     def __init__(self):
-        self.bls_fname = os.path.join(bls_data_dir, 'bls_summary.csv')
+        data_dir = PathManager.get_dir('bls')
+        self.bls_fname = os.path.join(data_dir, 'bls_summary.csv')
         self.bls_data = None
         if self._cache_age() > 15:
             self._load_from_bls_website()
@@ -282,7 +156,6 @@ class CurrentBLSData(object):
             self.bls_data = summary 
 
         except:
-            raise
             print '{}: Failed to load BLS laucntycur14 data; using summary cache\n'.format(dt.now())
     
 
@@ -335,6 +208,10 @@ class ReferenceData(object):
         return  
 
     @classmethod
+    def get_cbsa_list(cls, zip3):
+        return cls._zip3_to_cbsa[zip3]
+
+    @classmethod
     def load_zip3_to_location_name(cls):
         ''' loads a dictionary mapping the first 3 digits of the zip code to a 
         list of location names''' 
@@ -342,6 +219,10 @@ class ReferenceData(object):
             data = json.load(open(os.path.join(cls._cache_dir, 'zip2location.json'), 'r'))
             cls._zip3_to_location_name = dict([int(k), locs] for k, locs in data.items())
         return
+
+    @classmethod
+    def get_primary_city(cls, zip3):
+        return cls._zip3_to_primary_city[zip3]
 
     @classmethod
     def load_zip3_to_primary_city(cls):
@@ -468,76 +349,12 @@ class ReferenceData(object):
 
 
 
-class APIDataParser(object):
-    ''' 
-    Manages the parsing of the Lending Club API data:
-    1.  Converts string fields to numerical values, consistent with the historical data
-    2.  Fills NaN values with numeric defaults
-    3.  Converts numeric fields to make sure they are in the same units as the historical data
-    '''
-    reference_data = ReferenceData()
-    def __init__(self):
-        self.api_fields = self.reference_data.get_loanstats2api_map().values()
-        self.string_converter = StringToNumberConverter()
-        self.ok_to_be_null = ['dtiJoint',
-                              'desc',
-                              'isIncVJoint',
-                              'investorCount',
-                              'annualIncJoint',
-                              ]
-
-    def null_fill_value(self, field):
-        if( field.startswith('mthsSinceLast')
-                or field.startswith('mthsSinceRecent')
-                or field.startswith('moSinRcnt')):
-            return LARGE_INT
-        elif (field.startswith('moSinOld')
-                or field.startswith('num')
-                or field.endswith('Util')
-                or field == 'percentBcGt75'
-                or field == 'bcOpenToBuy'
-                or field == 'empLength'):
-            return NEGATIVE_INT 
-        elif field=='empTitle':
-            return ''
-        else:
-            return None
-    
-    def null_fill_fields(self):
-        return [f for f in self.api_fields if self.null_fill_value(f) is not None]
-
-    def parse(self, data):
-        for k in self.api_fields:
-            if k not in data.keys():
-                print 'Field {} is missing'.format(k)
-       
-        #API empLength is given in months. Convert to years
-        if data['empLength'] not in range(-1, 11):
-            data['empLength'] = min(11, data['empLength'] / 12)
- 
-        for k,v in data.items():
-            if v is None:
-                data[k] = self.null_fill_value(k) 
-                
-            if type(v) in [str, unicode]:
-                if 'String' not in k:
-                    data[k] = self.string_converter.convert(k, v)                
-                    if data[k] != v:
-                        data[u'{}String'.format(k)] = v
-
-            if data[k] is None and k not in self.ok_to_be_null:
-                print 'Field {} has a null value'.format(k)
-
 class LocationDataManager(object):
     ''' Manages the current BLS, FHFA'''
     def __init__(self):
         self.bls_data = CurrentBLSData() 
         self.reference_data = ReferenceData()
-        self.z2f = defaultdict(lambda :list(), load_z2f())
-        self.z2c = load_z2c()
-        self.z2pc = load_z2primarycity()
-        self.metro = load_metro_housing()
-        self.nonmetro = load_nonmetro_housing()
+        self.fhfa_data = FHFAData() 
 
     def get_features(self, zip3, state):
         ''' takes the first three digits of the zip code and returns
@@ -548,18 +365,18 @@ class LocationDataManager(object):
         info['avg_urate'] = avg_ur
         info['urate_chg'] = ur_chg
         info['census_median_income'] = self.reference_data.get_median_income(zip3)
-        info['primaryCity'] = self.z2pc[zip3]
-        metro_hpa = self.metro.ix[self.z2c[zip3]].dropna()
+        info['primaryCity'] = self.reference_data.get_primary_city(zip3)
+        cbsa_list = self.reference_data.get_cbsa_list(zip3)
+        metro_hpa = self.fhfa_data.get_metro_data().ix[cbsa_list].dropna()
         if len(metro_hpa)>0:
             info['hpa4'] = metro_hpa['1yr'].mean()
             info['hpa20'] = metro_hpa['5yr'].mean()
         else:
             print 'No FHFA data found for zip code {}xx'.format(zip3)
-            nonmetro_hpa = self.nonmetro.ix[state]
-            info['hpa4'] = nonmetro_hpa['1yr'].values[0]
-            info['hpa20'] = nonmetro_hpa['5yr'].values[0]
+            nonmetro_hpa = self.fhfa_data.get_nonmetro_data().ix[state]
+            info['hpa4'] = nonmetro_hpa['1yr']
+            info['hpa20'] = nonmetro_hpa['5yr']
         return info
-
 
 
 def get_external_data():
@@ -691,4 +508,188 @@ def get_external_data():
 
     urate = pd.DataFrame(urates)
     urate.to_csv(os.path.join(bls_data_dir, 'urate_by_3zip.csv'))
+
+
+
+def build_zip3_to_location_names():
+    import bls 
+    reference_data_dir = paths.get_dir('reference')
+    cw = pd.read_csv(os.path.join(reference_data_dir, 'CBSA_FIPS_MSA_crosswalk.csv'))
+    grp = cw.groupby('FIPS')
+    f2loc = dict([(k,list(df['CBSA Name'].values)) 
+                  for k in grp.groups.keys()
+                  for df in [grp.get_group(k)]])
+
+    z3f = json.load(open(os.path.join(reference_data_dir, 'zip3_fips.json'),'r'))
+    z2loc = dict()
+    for z,fips in z3f.items():
+        loc_set = set()
+        for f in fips:
+            if f in f2loc.keys():
+                loc_set.update([bls.convert_unicode(loc) for loc in f2loc[f]])
+        z2loc[int(z)] = sorted(list(loc_set))
+     
+    for z in range(1,1000):
+        if z not in z2loc.keys() or len(z2loc[z])==0:
+            z2loc[z] = ['No location info for {} zip'.format(z)]
+
+    json.dump(z2loc, open(os.path.join(reference_data_dir, 'zip2location.json'),'w'))
+
+def build_zip3_to_primary_city():
+    reference_data_dir = paths.get_dir('reference')
+    data= pd.read_csv(os.path.join(reference_data_dir, 'zip_code_database.csv'))
+    data['place'] = ['{}, {}'.format(c,s) for c,s in zip(data['primary_city'].values, data['state'].values)]
+
+    z2city = defaultdict(lambda :list())
+    for z,c in zip(data['zip'].values, data['place'].values):
+        z2city[int(z/100)].append(c)
+
+    z2primarycity = dict()
+    z2primary2 = dict()
+    for z,citylist in z2city.items():
+        z2primarycity[z] = Counter(citylist).most_common(1)[0][0]
+        z2primary2[z] = Counter(citylist).most_common(2)
+
+    for i in range(0,1000):
+        if i not in z2primarycity.keys():
+            z2primarycity[i] = 'No primary city for zip3 {}'.format(i)
+
+    json.dump(z2primarycity, open(os.path.join(reference_data_dir, 'zip2primarycity.json'),'w'))
+
+
+def get_external_data():
+    #def build_zip3_to_hpi():
+    reference_data_dir = paths.get_dir('reference')
+    z2c = pd.read_csv(os.path.join(reference_data_dir, 'zip2cbsa.csv'))
+    z2c['zip3'] = z2c['ZIP'].apply(lambda x: int(x/100))
+    z2c = z2c[z2c['CBSA']<99999]
+    grp = z2c.groupby('zip3')
+
+    z2clist = dict()
+    for z3 in grp.groups.keys():
+        g = grp.get_group(z3)
+        z2clist[z3] = sorted(list(set(g['CBSA'].values)))
+
+
+    # get metro hpi for main areas
+    fhfa_data_dir = paths.get_dir('fhfa')
+    link = "http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_metro.csv"
+    cols = ['Location','CBSA', 'yr','qtr','index', 'stdev']
+    try:
+        data = pd.read_csv(link, header=None, names=cols)
+        data.to_csv(os.path.join(fhfa_data_dir, 'HPI_AT_metro.csv'))
+    except:
+        print 'Failed to read FHFA website HPI data; using cached data'
+        data = pd.read_csv(os.path.join(fhfa_data_dir,'HPI_AT_metro.csv'), header=None, names=cols)
+
+    data = data[data['index']!='-']
+    data['index'] = data['index'].astype(float)
+    data['yyyyqq'] = 100 * data['yr'] + data['qtr'] 
+    data = data[data['yyyyqq']>199000]
+
+    index = np.log(data.pivot('yyyyqq', 'CBSA', 'index'))
+    hpa1q = index - index.shift(1) 
+    hpa1y = index - index.shift(4) 
+    hpa5y = index - index.shift(20)
+    hpa10y = index - index.shift(40)
+
+    hpa1 = dict()
+    hpa4 = dict()
+    hpa20 = dict()
+    hpa40 = dict()
+    for z,c in z2clist.items():
+        hpa1[z] = hpa1q.ix[:,c].mean(1)
+        hpa4[z] = hpa1y.ix[:,c].mean(1)
+        hpa20[z] = hpa5y.ix[:,c].mean(1)
+        hpa40[z] = hpa10y.ix[:,c].mean(1)
+    hpa1 = pd.DataFrame(hpa1).dropna(axis=1, how='all')
+    hpa4 = pd.DataFrame(hpa4).dropna(axis=1, how='all')
+    hpa20 = pd.DataFrame(hpa20).dropna(axis=1, how='all')
+    hpa40 = pd.DataFrame(hpa40).dropna(axis=1, how='all')
+
+    hpa1.to_csv(os.path.join(fhfa_data_dir,'hpa1.csv'))
+    hpa4.to_csv(os.path.join(fhfa_data_dir,'hpa4.csv'))
+    hpa20.to_csv(os.path.join(fhfa_data_dir,'hpa20.csv'))
+    hpa40.to_csv(os.path.join(fhfa_data_dir,'hpa40.csv'))
+
+    '''
+    # get non-metro hpi, for other zip codes
+    link='http://www.fhfa.gov/DataTools/Downloads/Documents/HPI/HPI_AT_nonmetro.xls'
+    try:
+        data = pd.read_excel(link, skiprows=2)
+        data.to_csv(os.path.join(p.parent_dir, 'HPI_AT_nonmetro.csv'))
+    except:
+        data = pd.read_csv(os.path.join(p.parent_dir,'HPI_AT_nonmetro.csv'))
+
+    grp = data.groupby('State')
+    tail5 = grp.tail(21).groupby('State')['Index']
+    chg5 = np.log(tail5.last()) - np.log(tail5.first())
+    tail1 = grp.tail(5).groupby('State')['Index']
+    chg1 = np.log(tail1.last()) - np.log(tail1.first())
+    chg = 100.0 * pd.DataFrame({'1yr':chg1, '5yr':chg5})
+
+    return chg
+    '''
+
+    # downloads the monthly non-seasonally adjusted employment data, and saves csv files for
+    # monthly labor force size, and number of unemployed by fips county code, to use to construct
+    # historical employment statistics by zip code for model fitting
+    z2f = json.load(file(os.path.join(reference_data_dir, 'zip3_fips.json'),'r'))
+
+    #z2f values are lists themselves; this flattens it
+    all_fips = []
+    for f in z2f.values():
+        all_fips.extend(f) 
+    fips_str = ['0'*(5-len(str(f))) + str(f) for f in all_fips]
+
+    data_code = dict()
+    data_code['03'] = 'unemployment_rate'
+    data_code['04'] = 'unemployment'
+    data_code['05'] = 'employment'
+    data_code['06'] = 'labor force'
+
+    #series_id = 'CN{}00000000{}'.format(fips, '06') 
+    cols = ['series_id', 'year', 'period', 'value']
+    link1 = 'http://download.bls.gov/pub/time.series/la/la.data.0.CurrentU10-14'
+    link2 = 'http://download.bls.gov/pub/time.series/la/la.data.0.CurrentU15-19'
+    cvt = dict([('series_id', lambda x: str(x).strip()) ])
+    data1 = pd.read_csv(link1, delimiter=r'\s+', usecols=cols, converters=cvt)
+    data2 = pd.read_csv(link2, delimiter=r'\s+', usecols=cols, converters=cvt)
+    data = pd.concat([data1, data2], ignore_index=True)
+    data = data.replace('-', np.nan)
+    data = data.dropna()
+    data = data.ix[data['period']!='M13']
+    data['value'] = data['value'].astype(float)
+    data['yyyymm'] = 100 * data['year'] + data['period'].apply(lambda x: int(x[1:]))
+    data['fips'] = [int(f[5:10]) for f in data['series_id']]
+    data['measure'] = [f[-2:] for f in data['series_id']]
+    data['region'] = [f[3:5] for f in data['series_id']]
+    del data['year'], data['period'], data['series_id']
+    county_data = data.ix[data['region']=='CN']
+    labor_force = county_data[county_data['measure']=='06'][['fips','yyyymm','value']]
+    labor_force = labor_force.pivot('yyyymm','fips','value')
+    unemployed = county_data[county_data['measure']=='04'][['fips','yyyymm','value']]
+    unemployed = unemployed.pivot('yyyymm','fips','value')
+
+    bls_data_dir = paths.get_dir('bls')
+    labor_force.to_csv(os.path.join(bls_data_dir, 'labor_force.csv'))
+    unemployed.to_csv(os.path.join(bls_data_dir, 'unemployed.csv'))
+
+    # reads the monthly labor force size, and number of unemployed by fips county code,
+    # and constructs historical employment statistics by zip code for model fitting
+    labor_force = labor_force.fillna(0).astype(int).rename(columns=lambda x:int(x))
+    unemployed = unemployed.fillna(0).astype(int).rename(columns=lambda x:int(x))
+
+    urates = dict()
+    for z,fips in z2f.items():
+        ue = unemployed.ix[:,fips].sum(1)
+        lf = labor_force.ix[:,fips].sum(1)
+        ur = ue/lf
+        ur[lf==0]=np.nan
+        urates[z] = ur
+
+    urate = pd.DataFrame(urates)
+    urate.to_csv(os.path.join(bls_data_dir, 'urate_by_3zip.csv'))
         
+
+

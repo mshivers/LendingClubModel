@@ -19,9 +19,13 @@ def clean_title(x):
     x = x.replace('"','')
     x = x.replace('/', ' ')
     for tok in '`~!@#$%^&*()_-+=\|]}[{;:/?.>,<':
-        x = x.replace(tok,'_')
+        x = x.replace(tok,'')
     x = '^{}$'.format(x) 
     return x
+
+
+def format_title(x):
+    return '^{}$'.format(only_ascii(x))
 
 def tokenize_capitalization(txt):
     txt = txt.strip()
@@ -81,5 +85,20 @@ def save_charity_pct():
     tax_df = pd.DataFrame({'agi':grp_sum['A00100'], 'charity':grp_sum['A19700']})
     tax_df['pct'] = tax_df['charity'] * 1.0 / tax_df['agi']
     json.dump(tax_df['pct'].to_dict(), open(os.path.join(reference_data_dir, 'charity_pct.json'), 'w'))
+
+
+def save_loan_info(loans):
+    f = open(os.path.join(saved_prod_data_dir, 'employer_data.csv'),'a')
+    for l in loans:
+        f.write('{}|{}|{}\n'.format(l['id'], l['currentJobTitle'],l['currentCompany']))
+        l['details_saved']=True
+    f.close()
+
+    f = open(os.path.join(saved_prod_data_dir, 'all_api_data.csv'),'a')
+    for l in loans:
+        save_str = '|'.join(['{}|{}'.format(k,v) for k,v in sorted(l.items())])
+        f.write(save_str + '\n')
+        l['details_saved']=True
+    f.close()
 
 
