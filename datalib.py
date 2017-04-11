@@ -9,6 +9,37 @@ from collections import defaultdict, Counter
 from personalized import p
 from constants import PathManager
 
+
+class LocationDataManager(object):
+    ''' Manages the current BLS, FHFA, and other reference data'''
+    def __init__(self):
+        self.bls_data = CurrentBLSData() 
+        self.reference_data = ReferenceData()
+        self.fhfa_data = FHFAData() 
+
+    def get(self, zip3, state):
+        ''' takes the first three digits of the zip code and returns
+        a dictionary of features for that location'''
+        info = dict()
+        ur, avg_ur, ur_chg = self.bls_data.get_urate(zip3)
+        info['urate'] = ur
+        info['avg_urate'] = avg_ur
+        info['urate_chg'] = ur_chg
+        info['census_median_income'] = self.reference_data.get_median_income(zip3)
+        info['primaryCity'] = self.reference_data.get_primary_city(zip3)
+        cbsa_list = self.reference_data.get_cbsa_list(zip3)
+        metro_hpa = self.fhfa_data.get_metro_data().ix[cbsa_list].dropna()
+        if len(metro_hpa)>0:
+            info['hpa4'] = metro_hpa['1yr'].mean()
+            info['hpa20'] = metro_hpa['5yr'].mean()
+        else:
+            print 'No FHFA data found for zip code {}xx'.format(zip3)
+            nonmetro_hpa = self.fhfa_data.get_nonmetro_data().ix[state]
+            info['hpa4'] = nonmetro_hpa['1yr']
+            info['hpa20'] = nonmetro_hpa['5yr']
+        return info
+
+
 class FHFAData(object):
     _data_dir = PathManager.get_dir('fhfa')
     _metro_data = None
@@ -346,37 +377,6 @@ class ReferenceData(object):
                 z2primarycity[i] = 'No primary city for zip3 {}'.format(i)
 
         json.dump(z2primarycity, open(os.path.join(cache_dir, 'zip2primarycity.json'),'w'))
-
-
-
-class LocationDataManager(object):
-    ''' Manages the current BLS, FHFA'''
-    def __init__(self):
-        self.bls_data = CurrentBLSData() 
-        self.reference_data = ReferenceData()
-        self.fhfa_data = FHFAData() 
-
-    def get_features(self, zip3, state):
-        ''' takes the first three digits of the zip code and returns
-        a dictionary of features for that location'''
-        info = dict()
-        ur, avg_ur, ur_chg = self.bls_data.get_urate(zip3)
-        info['urate'] = ur
-        info['avg_urate'] = avg_ur
-        info['urate_chg'] = ur_chg
-        info['census_median_income'] = self.reference_data.get_median_income(zip3)
-        info['primaryCity'] = self.reference_data.get_primary_city(zip3)
-        cbsa_list = self.reference_data.get_cbsa_list(zip3)
-        metro_hpa = self.fhfa_data.get_metro_data().ix[cbsa_list].dropna()
-        if len(metro_hpa)>0:
-            info['hpa4'] = metro_hpa['1yr'].mean()
-            info['hpa20'] = metro_hpa['5yr'].mean()
-        else:
-            print 'No FHFA data found for zip code {}xx'.format(zip3)
-            nonmetro_hpa = self.fhfa_data.get_nonmetro_data().ix[state]
-            info['hpa4'] = nonmetro_hpa['1yr']
-            info['hpa20'] = nonmetro_hpa['5yr']
-        return info
 
 
 def get_external_data():

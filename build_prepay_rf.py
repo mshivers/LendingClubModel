@@ -92,8 +92,8 @@ dv = [
      'totalRevHiLim',
      'urate',
      'urate_chg',
-     'default_empTitle_alltoks_odds',
-     'prepay_empTitle_alltoks_odds',
+     'default_empTitle_shorttoks_odds',
+     'prepay_empTitle_shorttoks_odds',
      'empTitle_length',
      'empTitle_frequency',
      ]

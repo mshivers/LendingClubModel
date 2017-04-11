@@ -12,56 +12,6 @@ from personalized import p
 
 
 
-def detail_str(loan):
-
-    pstr = 'BaseIRR: {:1.2f}%'.format(100*loan['base_irr'])
-    pstr += ' | StressIRR: {:1.2f}%'.format(100*loan['stress_irr'])
-    pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*loan['base_irr_tax'])
-    pstr += ' | StressIRRTax: {:1.2f}%'.format(100*loan['stress_irr_tax'])
-    pstr += ' | IntRate: {}%'.format(loan['intRate'])
-
-    pstr += '\nDefaultRisk: {:1.2f}%'.format(100*loan['default_risk'])
-    pstr += ' | DefaultMax: {:1.2f}%'.format(100*loan['default_max'])
-    pstr += ' | PrepayRisk: {:1.2f}%'.format(100*loan['prepay_risk'])
-    pstr += ' | PrepayMax: {:1.2f}%'.format(100*loan['prepay_max'])
-    pstr += ' | RiskFactor: {:1.2f}'.format(loan['risk_factor'])
-
-    pstr += '\nInitStatus: {}'.format(loan['initialListStatus'])
-    pstr += ' | Staged: ${}'.format(loan['staged_amount'])
-
-    pstr += '\nLoanAmnt: ${:1,.0f}'.format(loan['loanAmount'])
-    pstr += ' | Term: {}'.format(loan['term'])
-    pstr += ' | Grade: {}'.format(loan['subGrade'])
-    pstr += ' | Purpose: {}'.format(loan['purpose'])
-    pstr += ' | LoanId: {}'.format(loan['id'])
-    
-    pstr += '\nRevBal: ${:1,.0f}'.format(loan['revolBal'])
-    pstr += ' | RevUtil: {}%'.format(loan['revolUtil'])
-    pstr += ' | DTI: {}%'.format(loan['dti'])
-    pstr += ' | Inq6m: {}'.format(loan['inqLast6Mths'])
-    pstr += ' | 1stCredit: {}'.format(loan['earliestCrLine'].split('T')[0])
-    pstr += ' | fico: {}'.format(loan['ficoRangeLow'])
-  
-    pstr += '\nJobTitle: {}'.format(loan['currentJobTitle'])
-    pstr += ' | Company: {}'.format(loan['currentCompany'])
-    
-    pstr += '\nClean Title Log Odds: {:1.2f}'.format(loan['clean_title_log_odds'])
-    pstr += ' | Capitalization Log Odds: {:1.2f}'.format(loan['capitalization_log_odds'])
-    pstr += ' | Income: ${:1,.0f}'.format(loan['annualInc'])
-    pstr += ' | Tenure: {}'.format(loan['empLength'])
-
-    pstr += '\nLoc: {},{}'.format(loan['addrZip'], loan['addrState'])
-    pstr += ' | MedInc: ${:1,.0f}'.format(loan['census_median_income'])
-    pstr += ' | URate: {:1.1f}%'.format(100*loan['urate'])
-    pstr += ' | 12mChg: {:1.1f}%'.format(100*loan['urate_chg'])
-
-    pstr += '\nHomeOwn: {}'.format(loan['homeOwnership'])
-    pstr += ' | PrimaryCity: {}'.format(loan['primaryCity'])
-    pstr += ' | HPA1: {:1.1f}%'.format(loan['HPA1Yr'])
-    pstr += ' | HPA5: {:1.1f}%'.format(loan['HPA5Yr'])
-
-    return pstr 
-
 email_keys = ['accOpenPast24Mths','mthsSinceLastDelinq', 'mthsSinceRecentBc', 'bcUtil', 'totCollAmt', 
         'isIncV', 'numTlOpPast12m', 'totalRevHiLim', 'mthsSinceRecentRevolDelinq', 'revolBal',
         'pubRec', 'delinq2Yrs', 'inqLast6Mths', 'numOpRevTl', 'pubRecBankruptcies', 'numActvRevTl',

@@ -129,12 +129,14 @@ class Session(object):
         self.__log('Attempting to authenticate: {0}'.format(self.email))
 
         # Start session
+        agents = [ 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:52.0) Gecko/20100101 Firefox/52.0',
+                   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.133 Safari/537.36',
+                   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12) AppleWebKit/602.1.50 (KHTML, like Gecko) Version/10.0 Safari/602.1.50'
+                 ] 
         self.__session = requests.Session()
         self.__session.headers = {
             'Referer': 'https://www.lendingclub.com/',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/26.0.1410.65 Safari/537.31'
-        }
-
+            'User-Agent': agents[0]  }
         # Set last request time to now
         self.last_request_time = time.time()
 

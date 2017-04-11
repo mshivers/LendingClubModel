@@ -1,3 +1,15 @@
+## Lending Club's prepayment curves are all percentages of face value by month, 
+## rather than percentage of outstanding face value, which we do.  Should we change?
+import os
+import json
+import numpy as np
+import scipy
+from matplotlib import pyplot as plt
+import loanstats
+from constants import PathManager as paths
+import pandas as pd
+  
+   
 
 
 '''

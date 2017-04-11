@@ -14,6 +14,7 @@ import utils
 from personalized import p
 import datalib
 from constants import PathManager as paths
+from features import OddsFeature, FrequencyFeature
 
 def load_training_data(regen=False):
     fname = paths.get_file('training')
@@ -24,17 +25,35 @@ def load_training_data(regen=False):
         df = pd.read_csv(fname, header=0, index_col=0)
     else:
         print 'Cache not found. Generating cache from source data'
-        cache_base_data()
-        update_training_data()
+        cache_base_features_data()
+        add_model_features_to_cache()
         df = load_training_data()
     return df
 
-def load_base_data():
-    fname = paths.get_file('training')
+def load_base_features_data():
     df = pd.read_csv(paths.get_file('base'), header=0, index_col=0)
+    if 'id' in df.columns:
+        df = df.set_index('id')
     return df
 
-def cache_base_data():
+def load_loanstats_data():
+    fname = paths.get_file('loanstats')
+    df = pd.read_csv(fname, header=0, index_col=0)
+    if 'id' in df.columns:
+        df = df.set_index('id')
+    return df
+
+def load_employer_names():
+    emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/combined_data.txt')
+    employers = pd.read_csv(emp_data_file, sep='|', header=0, index_col=0)
+    return employers
+
+
+def load_payments(cols=None):
+        return pd.read_csv(paths.get_file('payments'), sep=',', header=0, usecols=cols)
+
+
+def cache_loanstats():
     '''This assembles the LC data and adds standard fields that don't change'''
     #rename columns to match API fields
     ref_data = datalib.ReferenceData() 
@@ -46,8 +65,7 @@ def cache_base_data():
         df = df.ix[idx1].copy()
         df['issue_d'] = df['issue_d'].apply(lambda x: dt.strptime(x, '%b-%Y'))
         idx2 = df['issue_d']>=np.datetime64('2013-10-01')
-        idx3 = df['issue_d'] <= dt.now() - td(days=366)
-        df = df.ix[idx2&idx3].copy()
+        df = df.ix[idx2].copy()
         df['id'] = df['id'].astype(int)
         return df
 
@@ -61,8 +79,8 @@ def cache_base_data():
     dataframes.append(clean_raw_data(pd.read_csv(fname.format('c'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname.format('d'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q1'), header=1)))
-    #dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q2'), header=1)))
-    #dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q3'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q2'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q3'), header=1)))
     print 'Concatenating dataframes'
     df = pd.concat(dataframes, ignore_index=True)
     print 'Dataframes imported'
@@ -80,6 +98,18 @@ def cache_base_data():
     for col in cvt.keys():
         print 'Parsing {}'.format(col)
         df[col] = df[col].apply(cvt[col])
+    
+    df = df.set_index('id')
+    df.to_csv(paths.get_file('loanstats_cache'))
+
+def cache_base_features_data():
+    '''This assembles the LC data and adds standard fields that don't change'''
+    
+    df = load_loanstats_data()
+    
+    #only keep data old enough to have 12m prepayment and default data
+    idx = df['issue_d'] <= dt.now() - td(days=366)
+    df = df.ix[idx].copy()
 
     api_parser = datalib.APIDataParser()
     for field in api_parser.null_fill_fields():
@@ -165,39 +195,52 @@ def cache_base_data():
     df.to_csv(paths.get_file('base'))
 
 
-def update_training_data(df=None):
+def add_model_features_to_cache(df=None):
     if df is None:
-        df = load_base_data() 
+        df = load_base_features_data() 
         print 'Dataframes imported'
+  
+    # process job title features
+    print 'Adding empTitle default odds features (this takes a while)'
+    training_data_dir = paths.get_dir('training')
+    sample = (df.in_sample)
+    subGrade_mean = df.ix[sample].groupby('subGrade')['12m_wgt_default'].transform(lambda x:x.mean())
+    values = df.ix[sample, '12m_wgt_default'] - subGrade_mean 
+    odds = OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='default')
+    odds.fit(strings=df.ix[sample, 'empTitle'].values, values=values)
+    odds.save(training_data_dir)
+    df[odds.feature_name] = df[odds.string_name].apply(odds.calc)
   
     # process job title features
     print 'Adding empTitle prepay odds features (this takes a while)'
     training_data_dir = paths.get_dir('training')
-    sample = (df.grade>=2) & (df.in_sample)
-    odds = OddsFeature(tok_type='alltoks', string_name='empTitle', value_name='prepay')
-    odds.fit(df.ix[sample, 'empTitle'].values, df.ix[sample, '12m_prepay'].values)
+    sample = (df.in_sample)
+    X = df.ix[sample, ['dti', 'bcUtil', 'loan_pct_income', 'revolUtil']].copy()
+    X['const'] = 1
+    X = X.values
+    target = df.ix[df.in_sample, '12m_prepay'].values
+    beta = np.linalg.lstsq(X, target)[0]
+    prediction = X.dot(beta)
+    values = (target - prediction)
+    odds = OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='prepay')
+    odds.fit(df.ix[sample, 'empTitle'].values, values=values)
     odds.save(training_data_dir)
-    feature_name = odds.feature_name() 
-    df[feature_name] = df[odds.string_name].apply(odds.calc)
-
-    # process job title features
-    print 'Adding empTitle default odds features'
-    sample = (df.grade>=2) & (df.in_sample)
-    odds = OddsFeature(tok_type='alltoks', string_name='empTitle', value_name='default')
-    odds.fit(df.ix[sample, 'empTitle'].values, df.ix[sample, '12m_wgt_default'].values)
-    odds.save(training_data_dir)
-    feature_name = odds.feature_name() 
-    df[feature_name] = df[odds.string_name].apply(odds.calc)
+    df[odds.feature_name] = df[odds.string_name].apply(odds.calc)
 
     #process frequency features
     print 'Adding frequency features'
     freq = FrequencyFeature(string_name='empTitle')
     freq.fit(df.ix[df.in_sample, 'empTitle'].values)
     freq.save(training_data_dir)
-    feature_name = freq.feature_name()
-    df[feature_name] = df[freq.string_name].apply(freq.calc)
+    df[freq.feature_name] = df[freq.string_name].apply(freq.calc)
  
     print 'Saving cache file'
     df.to_csv(paths.get_file('training'))
 
 
+def add_training_feature():
+    df = load_training_data()
+    
+    # Post code to add here
+
+    df.to_csv(paths.get_file('training'))

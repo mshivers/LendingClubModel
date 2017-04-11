@@ -1,18 +1,20 @@
 from datalib import ReferenceData
-from constants import StringToConst
+import constants
 from personalized import p
 from session import Session
+import requests
 import utils 
 
 class LendingClub(object):
 
-    def __init__(self, account='ira'):
+    def __init__(self, account):
         ''' Valid accounts are 'ira' or 'tax' as defined in personalized.py '''
         self.account_type = account
         self.email = p.get_email(account)
         self.id = p.get_id(account)
         self.key = p.get_key(account)
-        self.session = Session(email=self.email) 
+        self._pass = p.get_pass(account)
+        self.session = Session(email=self.email, password=self._pass) 
         self.session.authenticate()
             
     def get_listed_loans(self, new_only=True):
@@ -117,7 +119,7 @@ class APIDataParser(object):
     reference_data = ReferenceData()
     def __init__(self):
         self.api_fields = self.reference_data.get_loanstats2api_map().values()
-        self.string_converter = StringToConst()
+        self.string_converter = constants.StringToConst()
         self.ok_to_be_null = ['dtiJoint',
                               'desc',
                               'isIncVJoint',
@@ -130,15 +132,16 @@ class APIDataParser(object):
     def null_fill_value(self, field):
         if( field.startswith('mthsSinceLast')
                 or field.startswith('mthsSinceRecent')
-                or field.startswith('moSinRcnt')):
-            return LARGE_INT
+                or field.startswith('moSinRcnt')
+                or field.startswith('mthsSinceRcnt')):
+            return constants.LARGE_INT
         elif (field.startswith('moSinOld')
                 or field.startswith('num')
                 or field.endswith('Util')
                 or field == 'percentBcGt75'
                 or field == 'bcOpenToBuy'
                 or field == 'empLength'):
-            return NEGATIVE_INT 
+            return constants.NEGATIVE_INT 
         elif field=='empTitle':
             return ''
         else:
@@ -148,13 +151,15 @@ class APIDataParser(object):
         return [f for f in self.api_fields if self.null_fill_value(f) is not None]
 
     def parse(self, data):
-        if 'api_data_parsed' in data.keys():
-            if data['api_data_parsed'] == True:
-                return
+        valid = True 
+        if 'valid' in data.keys():
+            if data['valid'] == True:
+                return valid 
 
         for k in self.api_fields:
             if k not in data.keys():
                 print 'Field {} is missing'.format(k)
+                valid = False 
 
         for k,v in data.items():
             if v is None:
@@ -167,16 +172,16 @@ class APIDataParser(object):
                         data[u'{}String'.format(k)] = v
 
             if data[k] is None and k not in self.ok_to_be_null:
-                print 'Field {} has a null value'.format(k)
-       
+                print 'Field {} has a null value; check api_parser defaults'.format(k)
+                valid = False
+
         #API empLength is given in months. Convert to years
         if data['empLength'] not in range(-1, 11):
             data['empLength'] = min(11, data['empLength'] / 12)
 
         data['empTitle'] = utils.format_title(data['empTitle'])
-        data['empTitle_length'] = len(data['empTitle']) 
-        data['api_data_parsed'] = True
-
+        data['valid'] = valid 
+        return valid
 
 def calc_model_sensitivities(loans):
     for loan in loans:
@@ -251,12 +256,6 @@ def add_to_known_loans(known_loans, new_loans):
     return known_loans, new_ids 
 
 
-def sort_by_model_priority(loans, min_rate):
-    return sorted(loans, key=lambda x: (x['int_rate']<=min_rate, np.floor(x['clean_title_log_odds']), x['loanAmount']))
-
-
-def sort_by_int_rate(loans):
-    return sorted(loans, key=lambda x: x['int_rate'])
 
 
 def get_loans_to_evaluate(known_loans):

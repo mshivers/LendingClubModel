@@ -1,14 +1,11 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime as dt, timedelta as td
-import string
+from datetime import datetime as dt
 from sklearn import tree
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.externals import joblib
-from sklearn import cross_validation
-import itertools as it
-from collections import Counter, defaultdict
+from collections import defaultdict
 import os
 import json
 from constants import PathManager as paths
@@ -92,8 +89,8 @@ dv = [
      'totalRevHiLim',
      'urate',
      'urate_chg',
-     'default_empTitle_alltoks_odds',
-     'prepay_empTitle_alltoks_odds',
+     'default_empTitle_shorttoks_odds',
+     'prepay_empTitle_shorttoks_odds',
      'empTitle_length',
      'empTitle_frequency',
      ]
