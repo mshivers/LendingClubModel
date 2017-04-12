@@ -1,8 +1,11 @@
 import lclib
 import features
 import curves
+import numpy as np
 from constants import paths
 from datetime import datetime as dt
+from datetime import timedelta as td 
+from time import sleep
 
 class BackOffice(object):
     loans = dict()
@@ -15,8 +18,30 @@ class BackOffice(object):
         cls.loans[loan.id] = loan 
  
     @classmethod
-    def is_new(cls, loan_data):
-        return loan_data['id'] not in cls.loans.keys()
+    def is_new(cls, loan):
+        return loan.id not in cls.loans.keys()
+
+    def get(self, id):
+        if id in self.loans.keys():
+            return self.loans[id]
+        else:
+            return None
+
+    def all_loans(self):
+        return self.loans.values()
+
+    def loans_to_stage(self):
+        '''returns a set of loan ids to stage'''
+        to_stage = list() 
+        for id, loan in self.loans.items():
+            amount = loan.stage_amount()
+            elapsed = (dt.now()-loan.init_time).total_seconds()
+            if amount > 0 and elapsed < 30 * 60:
+                to_stage.append(loan)
+        return to_stage
+
+    def staged_loans(self):
+        return [loan for loan in self.all_loans() if loan['staged_amount']>0]
 
 
 class Quant(object):
@@ -24,77 +49,148 @@ class Quant(object):
         self.model_dir = model_dir
         self.api_data_parser = lclib.APIDataParser()
         self.feature_manager = features.FeatureManager(model_dir)
-        self.default_curves = curves.DefaultCurve(self.model_dir)
-        self.prepay_curves = curves.PrepayCurve(self.model_dir)
+        self.cashflow_model = curves.CashFlowModel(model_dir)
 
     def validate(self, loan_data):
         return self.api_data_parser.parse(loan_data)
 
     def run_models(self, loan_data):
-        self.feature_manager.process(loan_data)
-
+        self.feature_manager.process_lookup_features(loan_data)
+        self.feature_manager.process_forest_features(loan_data)
+        self.cashflow_model.process(loan_data) 
         
 
+class EmployerName(object):
+    def __init__(self):
+        self.account = lclib.LendingClub('hjg')
+        self.name_count = 0
+        self.auth_count = 0
+        
+    def get(self, id):
+        if not self.account.session.is_site_available():
+            self.account.session.authenticate()
+            self.auth_count += 1
+        name = self.account.get_employer_name(id)
+        self.name_count += 1
+        return name
 
 
 class PortfolioManager(object):
-    def __init__(self, model_dir=None):
+    def __init__(self, model_dir=None, required_return=0.08):
         if model_dir is None:
             model_dir = paths.get_dir('training')
         self.model_dir = model_dir
+        self.required_return = required_return
         self.quant = Quant(self.model_dir)
         self.account = lclib.LendingClub('ira')
         self.backoffice = BackOffice()
+        self.employer = EmployerName()        
 
     def search_for_yield(self):
         loans = self.account.get_listed_loans(new_only=True)
-        for loan_data in loans:
-            if self.backoffice.is_new(loan_data):
-                if self.quant.validate(loan_data):
-                    self.quant.run_models(loan_data)
-                    self.backoffice.track(Loan(loan_data))
+        for loan_data in sorted(loans, key=lambda x:x['intRate'], reverse=True):
+            loan = Loan(loan_data)
+            if self.backoffice.is_new(loan):
+                if self.quant.validate(loan):
+                    self.quant.run_models(loan)
+                    self.decide_to_invest(loan)                    
+                    self.backoffice.track(loan)
+                    loan.print_description() 
          
+    def decide_to_invest(self, loan):
+        if loan['irr'] > self.required_return:
+            if loan['gradeString'] < 'G':
+                excess_yield_dollars = 100
+                excess_yield = 100 * max(0, (loan['irr'] - self.required_return))
+                max_invest_amount = excess_yield_dollars * excess_yield 
+                max_invest_amount = 25 * np.ceil(max_invest_amount / 25)
+                loan['max_stage_amount'] = max_invest_amount 
+                self.stage_loan(loan) 
 
+    def stage_loan(self, loan):
+            amount_staged = self.account.stage_order(loan.id, loan.stage_amount()) 
+            loan['staged_amount'] += amount_staged
+            if amount_staged > 0: 
+                print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+            else:
+                print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+            if loan['currentCompany'] is None:
+                loan['currentCompany'] = self.employer.get(loan.id)
+            print dt.now(), self.employer.name_count, self.employer.auth_count
+       
+    def restage_loans(self):
+        loans_to_stage = self.backoffice.loans_to_stage()
+        if loans_to_stage:
+            print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
+            for loan in loans_to_stage: 
+                amount_to_stage = loan.stage_amount()
+                amount_staged = self.account.stage_order(loan.id, amount_to_stage)
+                loan['staged_amount'] += amount_staged
+                if amount_staged > 0: 
+                    print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+                else:
+                    print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+            for loan in loans_to_stage:
+                loan.print_description() 
+    
+    def check_employer(self, loan):
+        if loan['currentCompany'] is None:
+            loan['currentCompany'] = self.employer.get(loan.id)
+            print dt.now(), self.employer.name_count, self.employer.auth_count
 
+    def summarize_staged(self):
+        staged_loans = self.backoffice.staged_loans()
+        if staged_loans:
+            print 'Summary of {} staged loans:'.format(len(staged_loans))
+            for loan in staged_loans:
+                self.check_employer(loan)
+                loan.print_description()
 
-class Loan(object):
+    def try_for_awhile(self, minutes=10, min_irr=0.08):
+        start = dt.now()
+        end = start + td(minutes=minutes)
+        while dt.now() < end:
+            print 'Try Again...'
+            self.search_for_yield()
+            self.summarize_staged()
+            sleep(10)
+            self.restage_loans()
+
+        
+
+class Loan(dict):
     def __init__(self, features):
-        self.search_time = dt.now()
-        self.id = features['id']
-        self.features = features 
-        self.model_outputs = dict()
-        self.invested = {
-                        'max_stage_amount': 0,
-                        'staged_amount': 0
-                        }
-        self.flags = {
+        self.update({ 'max_stage_amount': 0,
+                      'staged_amount': 0,
                       'details_saved': False,
                       'email_details': False
-                      }
+                      })
+        if isinstance(features, dict):
+            self.update(features)
+        self.id = self['id']
+        self.init_time = dt.now()
 
-    def id(self):
-        return self.id
-
-    def get(self, feature):
-        if feature in self.features.keys():
-            return self.features[feature]
+    def __getitem__(self, x):
+        if x in self.keys():
+            return super(Loan, self).__getitem__(x)
         else:
             return None
 
+    def stage_amount(self):
+        return self['max_stage_amount'] - self['staged_amount']
+
+    def print_description(self):
+        print self.detail_str()
+
     def detail_str(self):
+        loan = self
         pstr = ''
-        #pstr += 'BaseIRR: {:1.2f}%'.format(100*loan['base_irr'])
-        #pstr += ' | StressIRR: {:1.2f}%'.format(100*loan['stress_irr'])
-        #pstr += ' | BaseIRRTax: {:1.2f}%'.format(100*loan['base_irr_tax'])
-        #pstr += ' | StressIRRTax: {:1.2f}%'.format(100*loan['stress_irr_tax'])
+        pstr += 'IRR: {:1.2f}%'.format(100*loan['irr'])
+        pstr += ' | IRRTax: {:1.2f}%'.format(100*loan['irr_after_tax'])
         pstr += ' | IntRate: {}%'.format(loan['intRate'])
-
-        pstr += '\nDefaultRisk: {:1.2f}%'.format(100*loan['default_risk'])
+        pstr += ' | DefaultRisk: {:1.2f}%'.format(100*loan['default_risk'])
         pstr += ' | PrepayRisk: {:1.2f}%'.format(100*loan['prepay_risk'])
-        #pstr += ' | RiskFactor: {:1.2f}'.format(loan['risk_factor'])
-
-        pstr += '\nInitStatus: {}'.format(loan['initialListStatus'])
-        #pstr += ' | Staged: ${}'.format(loan['staged_amount'])
+        pstr += ' | Staged: ${}'.format(loan['staged_amount'])
 
         pstr += '\nLoanAmnt: ${:1,.0f}'.format(loan['loanAmount'])
         pstr += ' | Term: {}'.format(loan['term'])
@@ -109,11 +205,17 @@ class Loan(object):
         pstr += ' | 1stCredit: {}'.format(loan['earliestCrLine'].split('T')[0])
         pstr += ' | fico: {}'.format(loan['ficoRangeLow'])
       
+        pstr += '\nAccOpen24M: {}'.format(loan['accOpenPast24Mths'])
+        pstr += ' | TradeLinesOpen12M: {}'.format(loan['numTlOpPast12m'])
+        pstr += ' | MthsSinceOldestRevol: {}'.format(loan['moSinOldRevTlOp'])
+        pstr += ' | IntPctIncome: {:1.0f}bps'.format(10000*loan['int_pct_inc'])
+        pstr += ' | InitStatus: {}'.format(loan['initialListStatusString'])
+
         pstr += '\nJobTitle: {}'.format(loan['empTitle'])
-        #pstr += ' | Company: {}'.format(loan['currentCompany'])
-        
-        pstr += '\nClean Title Log Odds: {:1.2f}'.format(loan['clean_title_log_odds'])
-        pstr += ' | Capitalization Log Odds: {:1.2f}'.format(loan['capitalization_log_odds'])
+        pstr += ' | Company: {}'.format(loan['currentCompany'])
+
+        pstr += '\nDefault Odds: {:1.2f}'.format(loan['default_empTitle_shorttoks_odds'])
+        pstr += ' | Prepay Odds: {:1.2f}'.format(loan['prepay_empTitle_shorttoks_odds'])
         pstr += ' | Income: ${:1,.0f}'.format(loan['annualInc'])
         pstr += ' | Tenure: {}'.format(loan['empLength'])
 
@@ -126,8 +228,11 @@ class Loan(object):
         pstr += ' | PrimaryCity: {}'.format(loan['primaryCity'])
         pstr += ' | HPA1: {:1.1f}%'.format(loan['hpa4'])
         pstr += ' | HPA5: {:1.1f}%'.format(loan['hpa20'])
+        
+        pstr += '\n\n'
 
         return pstr 
+
 
 
 '''

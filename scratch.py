@@ -8,8 +8,22 @@ from matplotlib import pyplot as plt
 import loanstats
 from constants import PathManager as paths
 import pandas as pd
-  
+from personalized import p  
    
+
+emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/combined_data.txt')
+comb_data = pd.read_csv(emp_data_file, sep='|', header=0, index_col=None)
+comb_ids = set(comb_data['id'].values)
+
+scrape_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/SCRAPE_FILE.txt')
+scrape_data = pd.read_csv(scrape_data_file, sep='|', header=0, index_col=None)
+scrape_ids = set(scrape_data['id'].values)
+
+remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/remaining_ids.txt')
+remaining_ids = set([int(r) for r in open(remaining_id_file, 'r').read().split('\n')])
+
+N = len(remaining_ids)
+print 'Need {} more datapoints'.format(N)
 
 
 '''

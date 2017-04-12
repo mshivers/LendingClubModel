@@ -49,12 +49,16 @@ class FeatureManager(object):
                     self.randomforests.append(feature)
                     print 'Loaded {} model'.format(feature.feature_name)
              
-    def process(self, loan):
+    def process_lookup_features(self, loan):
+        ''' these features are simple dictionary lookup features, and quick'''
         features = self.location_features.get(loan['addrZip'], loan['addrState'])
         loan.update(features)
         self.simple_features.calc(loan)
         for model in self.feature_models:
             loan[model.feature_name] = model.calc(loan[model.string_name])
+
+    def process_forest_features(self, loan): 
+        ''' these require running a random forest, so they're slow '''
         for model in self.randomforests:
             loan[model.feature_name] = model.calc(loan)
 
@@ -100,11 +104,13 @@ class OddsFeature(object):
         self.value_name = value_name #name of the value field the model predicts 
         self.feature_name = '{}_{}_{}_odds'.format(self.value_name, self.string_name, self.tok_type)
 
-    def _get_all_substrings(self, input_string):
+    @staticmethod
+    def _get_all_substrings(input_string):
         length = len(input_string)
         return [input_string[i:j+1] for i in xrange(length) for j in xrange(i,length)]
        
-    def _get_short_substrings(self, input_string, max_len):
+    @staticmethod
+    def _get_short_substrings(input_string, max_len):
         length = len(input_string)
         return [input_string[i:j+1] for i in xrange(length) 
                 for j in xrange(i+1,length) if j-i<max_len]
@@ -117,9 +123,11 @@ class OddsFeature(object):
                 toks.append(input_string)
         return toks
 
-    def _get_substrings_of_length(self, input_string, length):
+    @staticmethod
+    def _get_substrings_of_length(input_string, length):
         return [input_string[i:i+length] for i in range(max(1,len(input_string)-length))]
 
+    @staticmethod
     def _get_words(self, input_string):
         return input_string.strip().split()
 

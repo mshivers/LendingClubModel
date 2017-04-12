@@ -11,6 +11,100 @@ from collections import Counter
 from matplotlib import pyplot as plt
 
 
+class CashFlowModel(object):
+    required_fields = ['term', 'intRate', 'default_risk', 'prepay_risk']
+
+    def __init__(self, model_dir=None):
+        self.model_dir = model_dir
+        self.default_curves = DefaultCurve(self.model_dir)
+        self.prepay_curves = PrepayCurve(self.model_dir)
+
+    def process(self, loan_data):
+        inputs = [loan_data[field] for field in self.required_fields]
+        irr, irr_after_tax = self.calc_irr(*inputs)
+        loan_data['irr'] = irr
+        loan_data['irr_after_tax'] = irr_after_tax
+
+    def calc_irr(self, term, int_rate, default_risk, prepay_risk):
+        ''' In the code below, think of the calculations as applying to a pool of 100 loans, 
+        with a percentage fully prepaying each month and a percentage defaulting each month.'''
+
+        net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
+        income_tax_rate = 0.5
+        capital_gains_tax_rate = 0.2
+
+        monthly_int_rate = int_rate/1200.
+        pmt = np.pmt(monthly_int_rate, term, -1)
+        periods = 1 + np.arange(term)
+        ipmt = np.ipmt(monthly_int_rate, periods, term, -1)
+        ppmt = np.ppmt(monthly_int_rate, periods, term, -1)
+
+        default_curve = self.default_curves.custom_curve(term, default_risk)
+        prepay_curve = self.prepay_curves.custom_curve(term, prepay_risk)
+
+        # Adjust prepay curve so that prepay[11] is the odds the loan is prepaid any time
+        # before month 12.  The custom curve is the dollar value of the prepayment by month
+        # as a percentage of face value; we need the percentage of the loan balance that
+        # that will be prepaid, so divide prepay_curve by outstanding balance, then 
+        # renormalize so prepay[11] = prepay_risk
+
+        eom_balance = 1 - np.cumsum(ppmt)
+        adj_prepay_curve = prepay_curve / eom_balance
+        adj_risk = adj_prepay_curve[:12].sum()
+        prepay_curve *= prepay_risk / adj_risk
+
+        # Note: the time=0 cash-flow is the initial borrowed amount, needed for the irr calc
+        payments = np.zeros(term+1)
+        payments_after_tax = np.zeros(term+1)
+      
+        cummulative_defaults = np.cumsum(default_curve)
+        pct_prepaid_so_far = 0
+        pct_defaulted_so_far = 0
+
+        # add monthly payments
+        # Note here that defaults are as a percentage of outstanding balance, 
+        # whereas prepays are a percentage of original face value.
+        for m in range(1, term+1):
+            # calculate contractually-required payments
+            contract_interest_due = ipmt[m-1] 
+            contract_principal_due = ppmt[m-1] 
+            eom_balance = ppmt[m:].sum()
+            bom_balance = ppmt[m-1:].sum()
+
+            # account for defaults, which happen before payments
+            default_percent_this_month = default_curve[m-1] 
+            pct_defaulted_so_far = cummulative_defaults[m-1]
+            default_amount_this_month = bom_balance * default_percent_this_month
+
+            # account for principal payments 
+            performing_pct = (1 - pct_defaulted_so_far - pct_prepaid_so_far)
+            interest_received = contract_interest_due * performing_pct 
+            scheduled_principal_received = contract_principal_due * performing_pct 
+
+            prepay_amount_this_month = prepay_curve[m-1] 
+            prepay_percent_this_month = prepay_amount_this_month / eom_balance
+            pct_prepaid_so_far += prepay_percent_this_month
+
+            payments[m] = interest_received + scheduled_principal_received + prepay_amount_this_month
+
+            taxes_this_month = interest_received * net_payment_pct * income_tax_rate 
+            taxes_this_month = taxes_this_month - default_amount_this_month * capital_gains_tax_rate
+            payments_after_tax[m] = payments[m] - taxes_this_month 
+            
+        # reduce payments by lending club service charge
+        payments *= net_payment_pct
+
+        # Add initial investment outflow at time=0 to calculate irr: 
+        payments[0] += -1
+        payments_after_tax[0] += -1
+        
+        # the 12.0 is to convert back to annual rates.
+        irr = 12.0 * np.irr(payments)
+        irr_after_tax = 12.0 * np.irr(payments_after_tax)
+        
+        return irr, irr_after_tax
+   
+
 class DefaultCurve(object):
     ''' the i-th element in the baseline default curve is assumed to be
     the percentage of face value that has defaulted before the i-th scheduled 
@@ -220,6 +314,10 @@ class PrepayCurve(object):
             bucket_label = cls.bucket_labels[bucket_index]
         return '{}, {}'.format(bucket_label, term)
  
+    def get_curve_by_key(self, key, term):
+        curve_label = self.get_label(self.bucket_labels[key], term)
+        return self.baseline_curves[curve_label]
+
     @staticmethod
     def convert_cummulative_to_marginal(curve):
         return np.diff(np.r_[[0], curve])
@@ -261,24 +359,28 @@ class PrepayCurve(object):
         pct_outstanding = np.linspace(1, 0, term+1)[:-1]
         return curve / pct_outstanding 
  
+    def get_curve_range(self, term):
+        all_curves = np.vstack((self.get_curve_by_key(key, term) for key in self.bucket_labels.keys()))
+        return all_curves.max(0) - all_curves.min(0)
+
     def custom_curve(self, term, risk_12m):
         ''' risk input is the estimated percent of face value that will be prepaid 
         within 12 months of issuance '''
-        
         baseline_risks = [self.get_cummulative_curve(self.bucket_labels[lbl], term)[11] 
                           for lbl in sorted(self.bucket_labels.keys())]
         idx = int(np.digitize(risk_12m, baseline_risks))
 
         if idx==0:
-            factor = risk_12m / baseline_risks[idx]
-            custom_curve = factor * self.get_marginal_curve(self.bucket_labels[idx], term)
+            base = self.get_marginal_curve(self.bucket_labels[idx], term)
+            incr = self.get_curve_range(term) 
+            base_risk = self.convert_marginal_to_cummulative(base)[11]
+            incr_risk = self.convert_marginal_to_cummulative(incr)[11] 
+            factor = (risk_12m - base_risk) / incr_risk
+            custom_curve = base + factor * incr 
         elif idx==len(baseline_risks):
-            higher = self.get_cummulative_curve(self.bucket_labels[idx-1], term)
-            base = self.get_cummulative_curve(self.bucket_labels[idx-2], term)
-            incr = higher - base
-            factor = (risk_12m - baseline_risks[idx-2]) / incr[11]
-            custom_cummulative_curve = base + factor * incr
-            custom_curve = self.convert_cummulative_to_marginal(custom_cummulative_curve)
+            base = self.get_marginal_curve(self.bucket_labels[idx-1], term)
+            factor = (risk_12m / baseline_risks[idx-1]) 
+            custom_curve = factor * base 
         else:
             upper = self.get_cummulative_curve(self.bucket_labels[idx-1], term)
             lower = self.get_cummulative_curve(self.bucket_labels[idx], term)
@@ -286,6 +388,7 @@ class PrepayCurve(object):
             factor = (risk_12m - baseline_risks[idx]) / incr[11]
             custom_cummulative_curve = lower + factor * incr
             custom_curve = self.convert_cummulative_to_marginal(custom_cummulative_curve)
+
         return np.maximum(0, custom_curve)
             
   
@@ -366,116 +469,4 @@ class PrepayCurve(object):
        
         
 
-#TODO: modify this to use the rev_util version of prepayment curves, and adjust the curves
-# by hinge tilting them from month 20 & 30 for 3-year and 5-year loans, resp.
-# Hinge the default curves from month 15 & 20 for 3- and 5-year, resp.
-# Those hinge points roughly match empirical observations for how curves move from
-# one grade to the nearby ones.
-class ReturnCalculator(object):
-    def __init__(self, default_curves, prepay_curves):
-        self.default_curves = default_curves
-        self.prepay_curves = prepay_curves  #This is not currently used
-
-    def calc_irr(self, loan, default_rate_12m, prepayment_rate_12m):
-        ''' All calculations assume a loan amount of $1.
-        Note the default curves are the cumulative percent of loans that have defaulted prior 
-        to month m; the prepayment rate is the percentage of loans that were prepaid prior to 12m.
-        We'll assume that the prepayments are in full.  In the code below, think of the calculations
-        as applying to a pool of 100 loans, with a percentage fully prepaying each month and
-        a percentage defaulting each month.'''
-
-        net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
-        income_tax_rate = 0.5
-        capital_gains_tax_rate = 0.2
-
-        key = '{}{}'.format(min('G', loan['grade']), loan['term']) 
-        base_cdefaults = np.array(self.default_curves[key])
-        risk_factor = default_rate_12m / base_cdefaults[11]
-        loan['risk_factor'] = risk_factor
-
-        # adjust only the first 15 months of default rates downward to match the model's 12-month default estimate.
-        # this is a hack; adjusting the entire curve seems obviously wrong.  E.g if we had a C default curve
-        # that was graded D, adjusting the entire D curve down based on the 12-mth ratio would underestimate defaults
-        cdefaults = np.r_[base_cdefaults[:1],np.diff(base_cdefaults)]
-        if risk_factor < 1.0:
-            cdefaults[:15] *= risk_factor
-        else:
-            cdefaults *= risk_factor
-
-        cdefaults = cdefaults.cumsum()
-        eventual_default_pct = cdefaults[-1]
-
-        max_prepayment_pct = 1 - eventual_default_pct
-
-        # catch the case where total prepayments + total defaults > 100%  (they're estimated independently)
-        if max_prepayment_pct <= prepayment_rate_12m: 
-            return 0, 0
-  
-        #TODO: this isn't using the prepayment curves; FIX
-        # prepayment model give the odds of full prepayment in the first 12 months 
-        # here we calculate the probability of prepayment just for the loans that 
-        # won't default
-        prepayment_pool_decay_12m = (max_prepayment_pct - prepayment_rate_12m) / max_prepayment_pct
-        prepay_rate = 1.0 - prepayment_pool_decay_12m ** (1/12.0)  
-
-        monthly_int_rate = loan['intRate']/1200.
-        contract_monthly_payment = loan['monthly_payment'] / loan['loan_amount']
-        current_monthly_payment = contract_monthly_payment
-
-        # start with placeholder for time=0 investment for irr calc later
-        payments = np.zeros(loan['term']+1)
-        payments_after_tax = np.zeros(loan['term']+1)
-        
-        contract_principal_balance = 1.0
-        pct_loans_prepaid = 0.0
-        pct_loans_defaulted = 0.0
-        # add monthly payments
-        for m in range(1, loan['term']+1):
-            
-            # calculate contractually-required payments
-            contract_interest_due = contract_principal_balance * monthly_int_rate
-            contract_principal_due = min(contract_principal_balance, 
-                                         contract_monthly_payment - contract_interest_due)
-
-            default_rate_this_month = cdefaults[m-1] - pct_loans_defaulted
-            pct_loans_defaulted = cdefaults[m-1]
-     
-            # account for defaults and prepayments 
-            performing_pct = (1 - pct_loans_defaulted - pct_loans_prepaid)
-            interest_received = contract_interest_due * performing_pct 
-            scheduled_principal_received = contract_principal_due * performing_pct 
-            scheduled_principal_defaulted = default_rate_this_month * contract_principal_balance
-
-            # update contractual principal remaining (i.e. assuming no prepayments or defaults) 
-            # prior to calculating prepayments
-            contract_principal_balance -= contract_principal_due
-
-            #prepayments are a fixed percentage of the remaining pool of non-defaulting loans
-            prepayment_pct = max(0, (max_prepayment_pct - pct_loans_prepaid)) * prepay_rate
-            prepayment_amount = contract_principal_balance * prepayment_pct 
-
-            # account for prepayments
-            pct_loans_prepaid += prepayment_pct 
-
-            payments[m] = interest_received + scheduled_principal_received + prepayment_amount
-
-            taxes = interest_received * net_payment_pct * income_tax_rate 
-            taxes = taxes - scheduled_principal_defaulted * capital_gains_tax_rate
-            payments_after_tax[m] = payments[m] - taxes 
-            
-        # reduce payments by lending club service charge
-        payments *= net_payment_pct
-
-        # Add initial investment outflow at time=0 to calculate irr: 
-        payments[0] += -1
-        payments_after_tax[0] += -1
-        irr = np.irr(payments)
-        irr_after_tax = np.irr(payments_after_tax)
-        
-        # use same units for irr as loan interest rate
-        annualized_irr = irr * 12.0
-        annualized_irr_after_tax = irr_after_tax * 12.0
-
-        return annualized_irr, annualized_irr_after_tax 
-    
 

@@ -76,6 +76,7 @@ def update(max_num=1000):
     if max_num is None:
         max_num=99999
     acct_names = ['tax', 'ira'] + ['hjg']
+    acct_names *=2
     acct_names = sorted(acct_names)
 
     accounts = list()
@@ -84,17 +85,17 @@ def update(max_num=1000):
     #accounts = [LendingClub('tax'), LendingClub('ira'), LendingClub('hjg')] 
     accs = len(accounts)
 
-    emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/combined_data.txt')
+    emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/SCRAPE_FILE.txt')
+    emp_data = pd.read_csv(emp_data_file, sep='|', header=0, index_col=None)
+    existing_ids = set(emp_data['id'].values)
+
     remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/remaining_ids.txt')
-    remaining_ids = [int(r) for r in open(remaining_id_file, 'r').read().split('\n')]
+    remaining_ids = set([int(r) for r in open(remaining_id_file, 'r').read().split('\n')])
+    remaining_ids = remaining_ids.difference(existing_ids) 
 
-    if os.path.exists(emp_data_file):
-        existing_ids = set(pd.read_csv(emp_data_file, sep='|', header=None, index_col=0).index)
-    else:
-        existing_ids = set()
-
-    remaining_ids = [r for r in remaining_ids if r not in existing_ids]
     N = len(remaining_ids)
+    print 'Need {} more datapoints'.format(N)
+
     last_acc = accounts[0]
     with open(emp_data_file, 'a') as f:
         for i, id in enumerate(remaining_ids):
@@ -105,11 +106,12 @@ def update(max_num=1000):
             print acc_sleep_string(accounts, last_acc)
             sleep_func(sleep_time)
             company = next_acc.get_name(id)
-            company = company.replace('|','/')
-            if len(company)==0: 
+            if company is None:
                 accounts.remove(next_acc)
                 if len(accounts) == 0:
                     break 
+            else:
+                company = company.replace('|','/')
             last_acc = next_acc
             write_str = '{}|{}'.format(id, company)
             space_str = ' ' * max(0, 45 - len(write_str))

@@ -101,7 +101,7 @@ class LendingClub(object):
             return -1
 
     def get_employer_name(self, loan_id):
-        currentCompany = ''
+        currentCompany = None 
         result = self.get_loan_details(loan_id)
         if isinstance(result, dict):
             currentCompany = utils.only_ascii(result['currentCompany'])
@@ -183,6 +183,7 @@ class APIDataParser(object):
         data['valid'] = valid 
         return valid
 
+
 def calc_model_sensitivities(loans):
     for loan in loans:
         loancopy = copy.deepcopy(loan)
@@ -236,39 +237,6 @@ def calc_model_sensitivities(loans):
     return
 
 
-def add_to_known_loans(known_loans, new_loans):
-    new_ids = list()
-    for l in new_loans:
-        if l['id'] not in known_loans.keys():
-            l['max_stage_amount'] = 0
-            l['staged_amount'] = 0
-            l['default_risk'] = 100
-            l['base_irr'] = -100
-            l['stress_irr'] = -100
-            l['search_time'] = dt.now()
-            l['inputs_parsed'] = False 
-            l['api_details_parsed'] = False 
-            l['model_run'] = False
-            l['details_saved'] = False
-            l['email_details'] = False
-            known_loans[l['id']] = l
-            new_ids.append(l['id'])
-    return known_loans, new_ids 
-
-
-
-
-def get_loans_to_evaluate(known_loans):
-    loans_to_evaluate = list()
-    for l in known_loans.values():
-        if l['api_details_parsed']:
-            elapsed = (dt.now()-l['search_time']).total_seconds()
-            underfunded = l['max_stage_amount']>l['staged_amount']
-            retry_stage = (underfunded==True and elapsed<600)
-            retry_model = l['model_run']==False
-            if retry_stage or retry_model: 
-                loans_to_evaluate.append(l)
-    return loans_to_evaluate
 
 def update_recent_loan_info(known_loans, info):
     irr_list = list()
