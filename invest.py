@@ -1,17 +1,20 @@
 import lclib
 import features
 import curves
+import utils
 import numpy as np
 from constants import paths
 from datetime import datetime as dt
 from datetime import timedelta as td 
 from time import sleep
+from collections import defaultdict
 
 class BackOffice(object):
     loans = dict()
+    invested = defaultdict(lambda :0)
 
-    def __init__(self):
-        pass
+    def __init__(self, notes_owned):
+        self.update_notes_owned(notes_owned) 
 
     @classmethod
     def track(cls, loan):
@@ -34,7 +37,7 @@ class BackOffice(object):
         '''returns a set of loan ids to stage'''
         to_stage = list() 
         for id, loan in self.loans.items():
-            amount = loan.stage_amount()
+            amount = self.stage_amount(loan)
             elapsed = (dt.now()-loan.init_time).total_seconds()
             if amount > 0 and elapsed < 30 * 60:
                 to_stage.append(loan)
@@ -42,6 +45,12 @@ class BackOffice(object):
 
     def staged_loans(self):
         return [loan for loan in self.all_loans() if loan['staged_amount']>0]
+
+    def stage_amount(self, loan):
+        return max(0, loan['max_investment'] - loan['staged_amount'] - self.invested[loan.id])
+
+    def update_notes_owned(self, notes):
+        self.invested.update([(note['loanId'], note['loanAmount']) for note in notes])
 
 
 class Quant(object):
@@ -83,7 +92,7 @@ class PortfolioManager(object):
         self.required_return = required_return
         self.quant = Quant(self.model_dir)
         self.account = lclib.LendingClub('ira')
-        self.backoffice = BackOffice()
+        self.backoffice = BackOffice(self.account.get_notes_owned())
         self.employer = EmployerName()        
 
     def search_for_yield(self):
@@ -93,43 +102,39 @@ class PortfolioManager(object):
             if self.backoffice.is_new(loan):
                 if self.quant.validate(loan):
                     self.quant.run_models(loan)
-                    self.decide_to_invest(loan)                    
+                    self.set_max_investment(loan)                    
                     self.backoffice.track(loan)
+                    self.maybe_stage_loan(loan)    
                     loan.print_description() 
          
-    def decide_to_invest(self, loan):
+    def set_max_investment(self, loan):
         if loan['irr'] > self.required_return:
             if loan['gradeString'] < 'G':
                 excess_yield_dollars = 100
                 excess_yield = 100 * max(0, (loan['irr'] - self.required_return))
                 max_invest_amount = excess_yield_dollars * excess_yield 
                 max_invest_amount = 25 * np.ceil(max_invest_amount / 25)
-                loan['max_stage_amount'] = max_invest_amount 
-                self.stage_loan(loan) 
+                loan['max_investment'] = max_invest_amount 
 
-    def stage_loan(self, loan):
-            amount_staged = self.account.stage_order(loan.id, loan.stage_amount()) 
-            loan['staged_amount'] += amount_staged
-            if amount_staged > 0: 
-                print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
-            else:
-                print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
-            if loan['currentCompany'] is None:
-                loan['currentCompany'] = self.employer.get(loan.id)
-            print dt.now(), self.employer.name_count, self.employer.auth_count
-       
-    def restage_loans(self):
-        loans_to_stage = self.backoffice.loans_to_stage()
-        if loans_to_stage:
-            print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
-            for loan in loans_to_stage: 
-                amount_to_stage = loan.stage_amount()
+    def maybe_stage_loan(self, loan):
+            amount_to_stage = self.backoffice.stage_amount(loan)
+            if amount_to_stage > 0:
                 amount_staged = self.account.stage_order(loan.id, amount_to_stage)
                 loan['staged_amount'] += amount_staged
                 if amount_staged > 0: 
                     print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
                 else:
                     print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+                if loan['currentCompany'] is None:
+                    loan['currentCompany'] = self.employer.get(loan.id)
+                print dt.now(), self.employer.name_count, self.employer.auth_count
+       
+    def attempt_to_restage_loans(self):
+        loans_to_stage = self.backoffice.loans_to_stage()
+        if loans_to_stage:
+            print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
+            for loan in loans_to_stage: 
+                self.maybe_stage_loan(loan)
             for loan in loans_to_stage:
                 loan.print_description() 
     
@@ -146,21 +151,23 @@ class PortfolioManager(object):
                 self.check_employer(loan)
                 loan.print_description()
 
-    def try_for_awhile(self, minutes=10, min_irr=0.08):
+    def try_for_awhile(self, minutes=10, min_irr=0.09):
         start = dt.now()
         end = start + td(minutes=minutes)
         while dt.now() < end:
-            print 'Try Again...'
             self.search_for_yield()
             self.summarize_staged()
-            sleep(10)
-            self.restage_loans()
-
+            down_time = min(10, utils.sleep_seconds())
+            print 'Napping for {} seconds'.format(down_time)
+            sleep(down_time)
+            print 'Try Again...',
+            self.attempt_to_restage_loans()
+        print 'Done trying!'
         
 
 class Loan(dict):
     def __init__(self, features):
-        self.update({ 'max_stage_amount': 0,
+        self.update({ 'max_investment': 0,
                       'staged_amount': 0,
                       'details_saved': False,
                       'email_details': False
@@ -175,9 +182,6 @@ class Loan(dict):
             return super(Loan, self).__getitem__(x)
         else:
             return None
-
-    def stage_amount(self):
-        return self['max_stage_amount'] - self['staged_amount']
 
     def print_description(self):
         print self.detail_str()

@@ -27,56 +27,26 @@ def main():
 
 '''
 def main(min_irr=8, max_invest=500):
-    init_dt = dt.now() 
-    known_loans = dict()
-
-    email = 'both of them'
     cash_ira = lc_ira.get_cash_balance()
     cash_tax = lc_tax.get_cash_balance()
-    cash_update = dt.now()
     print 'IRA cash balance is ${}'.format(cash_ira)
     print 'Tax cash balance is ${}'.format(cash_tax)
-    location_data = lclib.LocationDataManager()
 
     while True:
         print '\n{}: Checking for new loans'.format(dt.now())
-        last_search_loans = get_new_loans_REST()
-        known_loans, new_ids = add_to_known_loans(known_loans, last_search_loans) 
-        for id in new_ids: 
-            model.parse_REST_loan_details(known_loans[id])
-        recent_loan_amounts = [l['loanAmount'] for l in known_loans.values() 
-                               if l['search_time']>dt.now()-td(minutes=60)]
         num_new_loans = len(recent_loan_amounts)
         value_new_loans = sum(recent_loan_amounts)
         info = {'num_new_loans':num_new_loans, 'value_new_loans':value_new_loans}
         print 'Found {} New Loans.'.format(len(new_ids))
         
         num_newly_staged = 0
-        loans_to_evaluate = get_loans_to_evaluate(known_loans)
-        loans_to_evaluate = sort_by_model_priority(loans_to_evaluate, min_irr+2)
-        for loan in loans_to_evaluate:
 
-
-                #Stage loan
-                amount_to_invest = loan['max_stage_amount'] - loan['staged_amount']
-                if amount_to_invest>0:
-                    amount_staged = 0
-                    if loan['stress_irr_tax'] > 0.04 and loan['grade'] < 'G':
-                        amount_staged = stage_order_fast(lc_tax, loan['id'], 500)
-                    amount_staged += stage_order_fast(lc_ira, loan['id'], amount_to_invest)
-
-                    loan['staged_amount'] += amount_staged
-                    loan['staged_time'] = dt.now()
-                    if amount_staged>0: 
-                        num_newly_staged += 1
-                        loan['email_details'] = True
-                    print 'Staged ${} of ${} requested at {}% for {}'.format(loan['staged_amount'], 
-                                                                      loan['max_stage_amount'],
-                                                                      loan['int_rate'], 
-                                                                      loan['emp_title']) 
-                                                               
-                            
-                print '\n{}:\n{}\n'.format(dt.now(), emaillib.detail_str(loan))
+        print 'Staged ${} of ${} requested at {}% for {}'.format(loan['staged_amount'], 
+                                                          loan['max_stage_amount'],
+                                                          loan['int_rate'], 
+                                                          loan['emp_title']) 
+                                                   
+        print '\n{}:\n{}\n'.format(dt.now(), emaillib.detail_str(loan))
         
         if len(new_ids)==0:   # get employer data if no new loans
             update_recent_loan_info(known_loans, info)
@@ -115,15 +85,6 @@ def main(min_irr=8, max_invest=500):
             sleep_str = 'No sleeping!'
 
         
-        if sleep_seconds > 300:
-            sleep_seconds = min(600, sleep_seconds)
-            import get_employer_data as ged
-            ged.update()
-       
-
-        sleep_str = '\n{}: Processed all loans... sleeping for {} minutes'.format(dt.now(), sleep_seconds/60.0)
-        print sleep_str
-        sleep(sleep_seconds)
 '''
 
 if __name__=='__main__':

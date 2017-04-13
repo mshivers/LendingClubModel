@@ -1,3 +1,7 @@
+from constants import UPDATE_HOURS
+from datetime import datetime as dt
+from datetime import timedelta as td 
+import numpy as np
 
 def only_ascii(s):
     return ''.join([c for c in s if ord(c)<128])
@@ -50,26 +54,12 @@ def hourfrac(tm):
     return (tm.hour + tm.minute/60.0 + tm.second / 3600.0)
 
 
-def invest_amount(loan, min_irr, max_invest=None):
-    if max_invest==None:
-        max_invest = 500
-    if loan['stress_irr'] < min_irr:
-        stage_amount = 0 
-    else:
-        # invest $25 for every 25bps that stress_irr exceeds min_irr
-        stage_amount =  max(0, 25 * np.ceil(400*(loan['stress_irr'] - min_irr)))
-    #don't invest in grade G loans; model doesn't work as well for those
-    if loan['grade'] >= 'G':
-        stage_amount = 0
-    loan['max_stage_amount'] =  min(max_invest, stage_amount) 
-
-
 def sleep_seconds(win_len=30):
      # win_len is the number of seconds to continuously check for new loans.
      # The period ends at the official update time.  
      now = dt.now()
      tm = now + td(seconds=win_len/2.0)
-     update_seconds = np.array([60*60*(hr - hourfrac(tm)) for hr in update_hrs])
+     update_seconds = np.array([60*60*(hr - hourfrac(tm)) for hr in UPDATE_HOURS])
      center = min(abs(update_seconds))
      max_sleep_seconds = 0.8 * max(center - win_len, 0)
      #seconds_to_hour = (59 - now.minute) * 60.0 + (60 - now.second)
