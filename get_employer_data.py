@@ -16,7 +16,7 @@ class PausedAccount(LendingClub):
         self.next_call = dt.now()
 
     def sleep_time(self):
-        mean = 3.0 
+        mean = 15.0 
         exp_mean = np.random.choice(1.0 / np.linspace(1/300., 1, 100)) 
         sleep_time = mean + np.random.exponential(exp_mean)
         return sleep_time 
@@ -76,7 +76,6 @@ def update(max_num=1000):
     if max_num is None:
         max_num=99999
     acct_names = ['tax', 'ira'] + ['hjg']
-    acct_names *=2
     acct_names = sorted(acct_names)
 
     accounts = list()

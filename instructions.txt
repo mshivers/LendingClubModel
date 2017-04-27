@@ -3,23 +3,25 @@ run get_external_data.py to grab bls employment data and FHFA house-price data
 
 # Download most recent LendingClub data:
 1. download the most recent Payments History Files (All Payments version) at http://additionalstatistics.lendingclub.com/
-and unzip the downloaded file and save to LCModel/data/.  Note this file will be many GBs large.
-2. Download the Loan Data from https://www.lendingclub.com/info/download-data.action (make sure you're logged in to your LendingClub account wwhen you do this; you get a more restricted dataset if you are not logged in).  Download all of the files, not just the one with the most recent loans, since these files contain current loan status for all loans.  Unzip the files and save to data/loanstats/
+2. Download the Loan Data from https://www.lendingclub.com/info/download-data.action 
+   -- Make sure you're logged in to your LendingClub account wwhen you do this; you get a more restricted dataset if you are not logged in).  
+   -- Download all of the files, not just the one with the most recent loans, since these files contain current loan status for all loans.  
+3. Unzip all the files and save to data/loanstats/
 
-In lclib, change the PAYMENTS_FILE variable points to the current payments csv file.
-In lclib.py::cache_training_data() make sure the list of files it opens includes every LoanStats file you just downloaded, and run that function.  This will also calculate and save the log odds and ranking dictionaries to the training data directory
+In constants.py, in the class variables for the PathManager class, update the "payments_file" variable to poin to the current payments csv file.
+In loanstats.py::cache_loanstats() make sure the list of files it opens includes every LoanStats file you just downloaded, and run that function.  
+Run cache_base_features() to append basic features to the loanstats data.
+Run add_model_features_to_cache() to append model-based features to the loanstats data, and save the model params files.
+This will calculate and save the log odds and ranking dictionaries to the training data directory
 
 # recalculated default and prepayment curves from investor payment data:
-run lclib.py::estimate_default_curves()
-run lclib.py::estimate_prepayement_curves()
-
+run curves.py::DefaultCurve.estimate_from_payments()
+run curves.py::PrepayCurve.estimate_from_payments()
 
 # build the random forest models for defaults and prepayments;
 run build_default_rf.py
 run build_prepayment_rf.py
 
-To push to prod, just copy entire training_data directory into a new directory, and change the production_model.py::model_directory to point to that; when you run lc.py::main() it will use the model in that directory.
-
-
+To push to prod, just copy entire training_data directory into a new directory, and make sure the model_dir path in lc.py::main() points there.
 
 

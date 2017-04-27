@@ -33,7 +33,7 @@ class LocationDataManager(object):
             info['hpa4'] = metro_hpa['1yr'].mean()
             info['hpa20'] = metro_hpa['5yr'].mean()
         else:
-            print 'No FHFA data found for zip code {}xx'.format(zip3)
+            print 'No FHFA data found for zip code {}xx, using data for {} instead'.format(zip3, state)
             nonmetro_hpa = self.fhfa_data.get_nonmetro_data().ix[state]
             info['hpa4'] = nonmetro_hpa['1yr']
             info['hpa20'] = nonmetro_hpa['5yr']

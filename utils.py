@@ -54,9 +54,8 @@ def hourfrac(tm):
     return (tm.hour + tm.minute/60.0 + tm.second / 3600.0)
 
 
-def sleep_seconds(win_len=30):
+def sleep_seconds(win_len=2):
      # win_len is the number of seconds to continuously check for new loans.
-     # The period ends at the official update time.  
      now = dt.now()
      tm = now + td(seconds=win_len/2.0)
      update_seconds = np.array([60*60*(hr - hourfrac(tm)) for hr in UPDATE_HOURS])

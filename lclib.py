@@ -120,7 +120,8 @@ class APIDataParser(object):
     def __init__(self):
         self.api_fields = self.reference_data.get_loanstats2api_map().values()
         self.string_converter = constants.StringToConst()
-        self.ok_to_be_null = ['dtiJoint',
+        self.ok_to_be_null = [
+                              'dtiJoint',
                               'desc',
                               'isIncVJoint',
                               'investorCount',
@@ -128,6 +129,12 @@ class APIDataParser(object):
                               'housingPayment',
                               'mtgPayment'
                               ]
+        self.required_nonzero = [
+                                 'annualInc', 
+                                 'loanAmount',
+                                 'totHiCredLim',
+                                 'totCurBal'
+                                 ]
 
     def null_fill_value(self, field):
         if( field.startswith('mthsSinceLast')
@@ -161,6 +168,7 @@ class APIDataParser(object):
                 print 'Field {} is missing'.format(k)
                 valid = False 
 
+
         for k,v in data.items():
             if v is None:
                 data[k] = self.null_fill_value(k) 
@@ -173,6 +181,10 @@ class APIDataParser(object):
 
             if data[k] is None and k not in self.ok_to_be_null:
                 print 'Field {} has a null value; check api_parser defaults'.format(k)
+                valid = False
+
+        for k in self.required_nonzero:   #these fields are denominators of simple features
+            if data[k] <= 0:
                 valid = False
 
         #API empLength is given in months. Convert to years
@@ -258,41 +270,5 @@ def update_recent_loan_info(known_loans, info):
         irr_data = [('A', 'F', -100)]
     info['irr_df'] = pd.DataFrame(data=irr_data, columns=col_names)
     return
-
-def get_loans_to_save(known_loans):
-    loans_to_save = list()
-    for l in known_loans.values():
-        if l['inputs_parsed']==True and l['details_saved']==False and l['currentCompany']!='':
-            loans_to_save.append(l)
-    return loans_to_save
-
-def get_recently_staged(known_loans):
-    recently_staged = list()
-    for l in known_loans.values():
-        if l['staged_amount'] > 0:
-            if 'staged_time' in l.keys():
-                if (dt.now()-l['staged_time']).total_seconds() < 3600:
-                    recently_staged.append(l)
-    return sort_by_int_rate(recently_staged)
-
-def attempt_to_stage(lc, known_loans):
-    #Try to stage or restage any loan that didn't get a full allocation
-    staged_loans = list()
-    for id, l in known_loans.items():
-        elapsed = (dt.now() - l['search_time']).total_seconds()
-        if (l['staged_amount']<l['max_stage_amount']) and (elapsed < 3600):
-            amount_to_invest = l['max_stage_amount'] - l['staged_amount']
-            amount_staged = stage_order_fast(lc, l['id'], amount_to_invest)
-            if amount_staged > 0:
-                l['staged_amount'] += amount_staged
-                l['staged_time'] = dt.now()
-                cash -= amount_staged 
-                staged_loans.append(l)
-                print 'Restaged ${} for loan {} for {}'.format(amount_staged, l['id'], l['emp_title']) 
-            else:
-                print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_invest, l['emp_title'])
-
-    return staged_loans
-
 
 

@@ -30,10 +30,11 @@ class PathManager(object):
     bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
     fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
     saved_prod_data_dir = os.path.join(p.parent_dir, 'data/saved_prod_data')
-    payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170315.csv')
+    payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170417.csv')
     cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
     base_data_file = os.path.join(training_data_dir, 'base_data.csv')
     loanstats_data_file = os.path.join(loanstats_dir, 'loanstats_data.csv')
+    employer_data_file = os.path.join(loanstats_dir, 'scraped_data/backoffice_employers.csv')
 
     def __init__(self):
         pass
@@ -65,6 +66,8 @@ class PathManager(object):
             return cls.base_data_file
         elif item in ['loanstats', 'loanstats_data', 'loanstats_cache']:
             return cls.loanstats_data_file
+        elif item == 'employer_data': 
+            return cls.employer_data_file
         else:
             return -1
 

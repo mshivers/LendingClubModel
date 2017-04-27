@@ -1,5 +1,8 @@
 New Feature Ideas:
 
+#TODO:  need to add JOINT application type support: check for JOINT, then copy the joint data to the single field (e.g. put annualIncJoint in the annualInc field)
+then make sure to add the application type to the random forest.  Also add application type to StringToNumber class
+
 These two features need to use the detailed payments file for the features:
 Add a logodds feature for the clean_title that predicts whether the borrower will have a late payment in the next 12 months.  This should be correlated with default risk, but more robust, since it happens more often.
 

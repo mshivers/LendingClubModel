@@ -6,29 +6,77 @@ import os
 import lclib
 import json
 import requests
-import personalized as p
+from personalized import p
+from constants import DefaultProb
+from collections import Counter
 
+default_wgt = lambda n :DefaultProb.by_status(n['loanStatus'])
 
-def get_notes(account='ira'):
+class PortfolioAnalysis(object):
+    def __init__(self, notes=None, account=None):
+        self.account = account
+        if notes==None:
+            self.notes = self.get_notes(account)
+        else:
+            self.notes = notes
 
-    if account == 'all':
-        return get_notes('ira') + get_notes('tax')
+    def _convert_to_date(self, dtstr):
+        try:
+            return dt.strptime(dtstr.split('T')[0], '%Y-%m-%d')
+        except:
+            return dtstr
 
-    if account == 'ira':
-        id = p.ira_id
-        key = p.ira_key
-    else:
-        id = p.taxable_id
-        key = p.taxable_key
+    def get_notes(self, account=None):
+        if account == None:
+            account = 'all'
+            notes = self.get_notes('ira') + self.get_notes('tax')
+        else:
+            id = p.get_id(account)
+            key = p.get_key(account)
 
-    notes = []
-    url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/detailednotes'.format(id)
-    result = requests.get(url, headers={'Authorization': key})
-    if result.status_code == 200:  #success
-        result_js = result.json()
-        if 'myNotes' in result_js.keys():
-            notes = result.json()['myNotes']
-    return notes
+            notes = []
+            url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/detailednotes'.format(id)
+            result = requests.get(url, headers={'Authorization': key})
+            if result.status_code == 200:  #success
+                result_js = result.json()
+                if 'myNotes' in result_js.keys():
+                    notes = result.json()['myNotes']
+            for note in notes:
+                note['account'] = account
+                for k,v in note.items():
+                    if k.endswith('Date'):
+                        note[k+'time'] = self._convert_to_date(v)
+        self.notes = notes
+        self.account = account
+        return notes
+
+    def get_grade(self, grade):
+        if len(grade)==1:
+            notes = [note for note in self.notes if note['grade'][:1] == grade]
+        else:
+            notes = [note for note in self.notes if note['grade'] == grade]
+        return notes
+
+    def notes_by_status(self, status):
+        return [note for note in self.notes if note['currentPaymentStatus']==status]
+
+    def days_since_payment(self, note):
+        if note['lastPaymentDatetime'] is not None:
+            return (dt.now() - note['lastPaymentDatetime']).days 
+        else:
+            return (dt.now() - note['issueDatetime']).days 
+
+    def status_by_issue_month(self):
+        df = pd.DataFrame(self.notes)
+        df['firstDatetime'] = df['issueDatetime']
+        idx = df.firstDatetime.isnull()
+        df.ix[idx, 'firstDatetime'] = df.ix[idx, 'orderDatetime']
+        df['issueMth'] = df['firstDatetime'].apply(lambda x:x.strftime('%Y%m'))
+        by_status = df.groupby(['issueMth', 'loanStatus'])['principalPending'].sum().unstack()
+        invested = df.groupby('issueMth')['principalPending'].sum()
+        by_status = by_status.div(invested, axis=0)
+        by_status['invested'] = invested
+        return by_status
 
 
 def parse_date(dtstr):
@@ -95,8 +143,6 @@ def total_interest_received(notes, num_months=None):
             total_interest += min(n['interestReceived'],exp_interest)
         return total_interest
 
-from lclib import DefaultProb
-default_wgt = lambda n :DefaultProb.by_status(n['loanStatus'])
 def expected_write_offs(notes, num_months=None):
     if num_months == None:
         return sum([default_wgt(n) * n['principalPending'] for n in notes if n['issueDate'] is not None])
@@ -198,3 +244,5 @@ def initial_returns(notes, num_months):
             'exp_defaults', 'act_return', 'exp_return']
     df = pd.DataFrame(data=out, columns=cols) 
     return df 
+
+

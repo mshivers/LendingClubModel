@@ -9,8 +9,15 @@ import loanstats
 from constants import PathManager as paths
 import pandas as pd
 from personalized import p  
-   
 
+
+allpmts = open('data/loanstats/PMTHIST_ALL_20170315.csv', 'r'). readline().strip().upper().split(',')
+invpmts = open('data/loanstats/PMTHIST_INVESTORS_20170417.csv', 'r'). readline().strip().upper().split(',')
+
+inota = sorted([f for f in invpmts if f not in allpmts])
+anoti = sorted([f for f in allpmts if f not in invpmts])
+
+'''
 emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/combined_data.txt')
 comb_data = pd.read_csv(emp_data_file, sep='|', header=0, index_col=None)
 comb_ids = set(comb_data['id'].values)
@@ -26,7 +33,6 @@ N = len(remaining_ids)
 print 'Need {} more datapoints'.format(N)
 
 
-'''
 #test_data = fit_data.ix[~fit_data.in_sample] 
 #predictions = [tree.predict(x_test) for tree in forest.estimators_]
 #predictions = np.vstack(predictions).T  #loans X trees
