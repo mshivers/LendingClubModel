@@ -136,7 +136,7 @@ class Session(object):
         self.__session = requests.Session()
         self.__session.headers = {
             'Referer': 'https://www.lendingclub.com/',
-            'User-Agent': agents[0]  }
+            'User-Agent': agents[2]  }
         # Set last request time to now
         self.last_request_time = time.time()
 

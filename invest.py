@@ -2,7 +2,9 @@ import lclib
 import features
 import curves
 import utils
+import json
 import numpy as np
+import pandas as pd
 import emaillib
 from constants import paths
 from datetime import datetime as dt
@@ -13,7 +15,7 @@ from collections import defaultdict
 class BackOffice(object):
     loans = dict()
     invested = defaultdict(lambda :0)
-    employers = defaultdict(lambda :None)
+    employers = dict() 
     
     def __init__(self, notes_owned=None):
         self.update_notes_owned(notes_owned) 
@@ -22,8 +24,10 @@ class BackOffice(object):
     def __del__(self):
         with open(paths.get_file('employer_data'), 'a') as f:
             for loan in self.all_loans():
-                if loan['currentCompany'] is not None:
-                    f.write('{}|{}\n'.format(loan.id, loan['currentCompany']))
+                if loan['id'] not in self.employers.keys():
+                    if loan['currentCompany'] is not None:
+                        if (loan['currentCompany'] != 'n/a') or (loan['empTitle'] == '^$'):
+                            f.write('{}|{}\n'.format(loan.id, loan['currentCompany']))
 
     @classmethod
     def load_employers(cls):
@@ -36,17 +40,16 @@ class BackOffice(object):
     def track(cls, loan):
         cls.loans[loan.id] = loan 
         loan['invested_amount'] = cls.invested[loan.id]
-        if loan['currentCompany'] is None:
+        if loan.id in cls.employers.keys():
             loan['currentCompany'] = cls.employers[loan.id]
-            print 'Loaded employers data: {}: {}'.format(loan.id, loan['currentCompany']) 
 
     @classmethod
     def is_new(cls, loan):
-        return loan.id not in cls.loans.keys()
+        return loan['id'] not in cls.loans.keys()
 
-    def get(self, id):
-        if id in self.loans.keys():
-            return self.loans[id]
+    def get(self, _id):
+        if _id in self.loans.keys():
+            return self.loans[_id]
         else:
             return None
 
@@ -54,7 +57,7 @@ class BackOffice(object):
         return self.loans.values()
 
     def recent_loans(self):
-        return [loan for loan in self.loans if loan.init_time.hour == dt.now().hour]
+        return [loan for loan in self.loans.values() if loan['is_new'] == True]
 
     def staged_loans(self):
         return [loan for loan in self.all_loans() if loan['staged_amount']>0]
@@ -78,38 +81,39 @@ class BackOffice(object):
 
     def report(self):
         recent_loans = self.recent_loans()
-        info = pd.DataFrame([(l['loanAmount'], l['grade'], l['IRR'], l['staged_amount']) for l in recent_loans],
-                columns = ['loanAmount', 'grade', 'IRR', 'staged'])
+        if len(recent_loans) > 0:
+            df = pd.DataFrame(recent_loans)
+            df['is_staged'] = (df['staged_amount'] > 0).astype(int)
+            grade_grp = df.groupby('subGradeString')
+            series = {'numFound':grade_grp['id'].count()}
+            series['loanAmount'] = grade_grp['loanAmount'].sum()
+            series['meanIRR'] = grade_grp['irr'].mean()
+            series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
+            series['numStaged'] = grade_grp['is_staged'].sum()
+            series['reqReturn'] = grade_grp['required_return'].mean()
 
-        recent_loan_value = info['loanAmount'].sum()
+            info_by_grade = pd.DataFrame(series)
+            formatters = dict()
+            formatters['loanAmount'] = lambda x: '${:0,.0f}'.format(x)
+            formatters['meanIRR'] = lambda x: '{:1.2f}%'.format(100*x)
+            formatters['maxIRRTax'] = lambda x: '{:1.2f}%'.format(100*x)
+            formatters['reqReturn'] = lambda x: '{:1.2f}%'.format(100*x)
 
-        g = info.groupby('grade')
-        def compute_metrics(x):
-            result = {'irr_count': x['IRR'].count(), 'irr_mean': x['IRR'].mean()}
-            return pd.Series(result, name='metrics')
-        recent_info_by_grade = g.apply(compute_metrics)
-        bought_info_by_grade = info.ix[info.staged>0].groupby('grade').apply(compute_metrics)
-   
-        irr_msgs = list()
-        irr_msgs.append('Average IRR is {:1.2f}%.'.format(100*info['average_irr']))
-        for grade in sorted(info['irr_by_grade'].keys()):
-            avg = 100*np.mean(info['irr_by_grade'][grade])
-            num = len(info['irr_by_grade'][grade])
-            bought = int(count_by_grade[grade])
-            irr_msgs.append('Average of {} grade {} IRRs is {:1.2f}%; {} staged.'.format(num, grade, avg, bought))
+            recent_loan_value = df['loanAmount'].sum()
+            msg_list = list()
+            msg_list.append('{} orders have been staged.'.format(len(self.staged_loans())))
+            msg_list.append('{} total loans found, valued at ${:1,.0f}'.format(len(recent_loans), recent_loan_value))
 
-        msg_list = list()
-        msg_list.append('{} orders have been staged.'.format(len(self.staged_loans())))
-        msg_list.append('{} total loans found, valued at ${:1,.0f}'.format(len(recent_loans), recent_loan_value))
-        msg_list.append(irr_by_grade.to_string())
-        msg_list.append('\r\n'.join(irr_msgs))
-        for loan in self.staged_loans():
-            msg_list.append(loan.detail_str())
-        msg_list.append('https://www.lendingclub.com/account/gotoLogin.action')
-        msg_list.append('Send at MacOSX clocktime {}'.format(dt.now()))
-        msg = '\r\n\n'.join(msg_list) 
-        send_email(msg)
-        return
+            msg_list.append(info_by_grade.to_string(formatters=formatters, col_space=10))
+
+            for loan in self.staged_loans():
+                msg_list.append(loan.detail_str())
+            msg_list.append('https://www.lendingclub.com/account/gotoLogin.action')
+            msg_list.append('Send at MacOSX clocktime {}'.format(dt.now()))
+            msg = '\r\n\n'.join(msg_list) 
+        else:
+            msg = 'No loans found\n\n'
+        return msg
 
 
 class Quant(object):
@@ -132,7 +136,8 @@ class EmployerName(object):
     def __init__(self, account_name=None):
         if account_name is None:
             account_name = 'hjg'
-        self.account = lclib.LendingClub(account_name)
+        self.account_name = account_name
+        self.account = None 
         self.name_count = 0
         self.auth_count = 0
         self.next_call = dt.now()
@@ -147,6 +152,8 @@ class EmployerName(object):
         self.next_call = dt.now() + td(seconds=self.sleep_seconds())
  
     def get(self, id):
+        if self.account is None:
+            self.account = lclib.LendingClub(self.account_name)
         self.name_count += 1
         if dt.now() < self.next_call:
             wait = self.seconds_to_wake()
@@ -162,40 +169,98 @@ class EmployerName(object):
                 pass
             self.auth_count += 1
             name = self.account.get_employer_name(id)
+            self.set_next_call_time()
         return name
+
+class Allocator(object):
+    one_bps = 0.0001
+    min_return = 0.08
+    participation_pct = 0.10
+
+    def __init__(self, notes, cash):
+        self.compute_current_allocation(notes, cash)
+        self.load_required_returns()
+
+    def __del__(self):
+        fname = paths.get_file('required_returns')
+        json.dump(self.required_return, open(fname, 'w'), indent=4, sort_keys=True)
+
+    def compute_current_allocation(self, notes, cash):
+        notes = pd.DataFrame(notes)
+        alloc = notes.groupby('grade')['principalPending'].sum()
+        alloc = alloc / (cash + alloc.sum())
+        alloc_dict = defaultdict(lambda :0, alloc.to_dict())
+        self.current_allocation = alloc_dict
+
+    def load_required_returns(self):
+        fname = paths.get_file('required_returns')
+        self.required_return = json.load(open(fname, 'r'))
+        json.dump(self.required_return, open(fname + '.old', 'w'), indent=4, sort_keys=True)
+
+    def raise_required_return(self, grade):
+        adj = (1.0 / self.participation_pct) - 1
+        self.required_return[grade] += adj * self.one_bps
+
+    def lower_required_return(self, grade):
+        self.required_return[grade] -= self.one_bps
+        if self.required_return[grade] < self.min_return:
+            self.required_return[grade] = self.min_return
+
+    def get_required_return(self, grade):
+        if grade in self.required_return.keys():
+            return self.required_return[grade]
+        else:
+            return None
+
+    def set_max_investment(self, loan):
+        grade = loan['subGradeString']
+        loan['required_return'] = self.get_required_return(grade)
+        if loan['irr'] > loan['required_return']:
+            excess_yield_in_bps = max(0, loan['irr'] - loan['required_return']) / self.one_bps
+            max_invest_amount = 25 + min(125, excess_yield_in_bps)
+            loan['max_investment'] = 25 * np.floor(max_invest_amount / 25)
+            self.raise_required_return(grade)
+        else:
+            self.lower_required_return(grade)
 
 
 class PortfolioManager(object):
     def __init__(self, model_dir=None, required_return=0.08):
+        self.account = lclib.LendingClub('ira')
         if model_dir is None:
             model_dir = paths.get_dir('training')
         self.model_dir = model_dir
-        self.required_return = required_return
         self.quant = Quant(self.model_dir)
-        self.account = lclib.LendingClub('ira')
-        self.backoffice = BackOffice(self.account.get_notes_owned())
+        self.cash = self.account.get_cash_balance()
+        notes = self.account.get_notes_owned()
+        self.backoffice = BackOffice(notes)
+        self.allocator = Allocator(notes, self.cash)
         self.employer = EmployerName('hjg')        
+        self.load_old_loans()
 
+    def load_old_loans(self):
+        loans = self.account.get_listed_loans(new_only=False)
+        print '{}: Found {} old listed loans.'.format(dt.now(), len(loans))
+        for loan_data in loans:
+            loan = Loan(loan_data)
+            loan['is_new'] = False
+            self.quant.validate(loan)
+            #    self.quant.run_models(loan)
+            self.backoffice.track(loan)
+ 
     def search_for_yield(self):
         loans = self.account.get_listed_loans(new_only=True)
-        print '{}: Found {} listed loans.'.format(dt.now(), len(loans))
-        for loan_data in sorted(loans, key=lambda x:x['intRate'], reverse=True):
+        new_loans = [loan for loan in loans if self.backoffice.is_new(loan)] 
+        print '{}: Found {} listed loans; {} new loans.'.format(dt.now(), len(loans), len(new_loans))
+        for loan_data in sorted(new_loans, key=lambda x:x['intRate'], reverse=True):
             loan = Loan(loan_data)
-            if self.backoffice.is_new(loan):
-                if self.quant.validate(loan):
-                    self.quant.run_models(loan)
-                    self.set_max_investment(loan)                    
-                    self.backoffice.track(loan)
-                    self.maybe_stage_loan(loan)    
-                    loan.print_description() 
+            if self.quant.validate(loan):
+                self.quant.run_models(loan)
+                self.allocator.set_max_investment(loan)                    
+                self.backoffice.track(loan)
+                self.maybe_stage_loan(loan)    
+                loan.print_description() 
          
-    def set_max_investment(self, loan):
-        if loan['irr'] > self.required_return:
-            if loan['gradeString'] < 'G':
-                excess_yield_in_bps = 10000 * max(0, loan['irr'] - self.required_return)
-                max_invest_amount = 100 + min(150, excess_yield_in_bps)
-                loan['max_investment'] = 25 * np.floor(max_invest_amount / 25)
-
     def maybe_stage_loan(self, loan):
             amount_to_stage = self.backoffice.stage_amount(loan)
             if amount_to_stage > 0:
@@ -219,36 +284,40 @@ class PortfolioManager(object):
         if loan['currentCompany'] is None:
             loan['currentCompany'] = self.employer.get(loan.id)
             print dt.now(), self.employer.name_count, self.employer.auth_count,
+            print loan['id'], loan['subGradeString'], 
+            if loan['irr'] is not None:
+                print '{:1.2f}%'.format(100*loan['irr']), 
             print loan['empTitle'], loan['currentCompany']
 
-    def summarize_staged(self):
+    def get_staged_employers(self):
         staged_loans = self.backoffice.staged_loans()
-        msg = list() 
-        msg.append('Summary of {} staged loans:'.format(len(staged_loans)))
-        if staged_loans:
-            for loan in staged_loans:
-                self.check_employer(loan)
-                msg.append(loan.detail_str())
-        return '\n'.join(msg)
+        for loan in staged_loans:
+            self.check_employer(loan)
 
     def get_remaining_employers(self):
-        for loan in self.backoffice.all_loans():
-            self.check_employer(loan)
+        missing_employer_loans = [loan for loan in self.backoffice.all_loans() if loan['currentCompany'] is None]
+        print '{} loans without employers found'.format(len(missing_employer_loans))
+        for loan in missing_employer_loans:
+            if self.employer.auth_count < 3:
+                self.check_employer(loan)
 
     def try_for_awhile(self, minutes=10, min_irr=0.09):
         start = dt.now()
         end = start + td(minutes=minutes)
-        while dt.now() < end:
+        while True: 
             self.search_for_yield()
-            print self.summarize_staged()
+            self.get_staged_employers()
+            print self.backoffice.report()
+            if dt.now() > end:
+                break
             down_time = min(10, utils.sleep_seconds())
             print 'Napping for {} seconds'.format(down_time)
             sleep(down_time)
             print '\n\nTry Again...\n\n'
             self.attempt_to_restage_loans()
         print 'Done trying!'
-        msg = self.summarize_staged()
-        emaillib.send_email(msg) 
+        emaillib.send_email(self.backoffice.report()) 
+        self.get_remaining_employers()
 
 
 class Loan(dict):
@@ -256,7 +325,8 @@ class Loan(dict):
         self.update({ 'max_investment': 0,
                       'staged_amount': 0,
                       'details_saved': False,
-                      'email_details': False
+                      'email_details': False,
+                      'is_new':True
                       })
         if isinstance(features, dict):
             self.update(features)
@@ -277,11 +347,15 @@ class Loan(dict):
         pstr = ''
         pstr += 'IRR: {:1.2f}%'.format(100*loan['irr'])
         pstr += ' | IRRTax: {:1.2f}%'.format(100*loan['irr_after_tax'])
+        if loan['required_return']:
+            pstr += ' | MinIRR: {:1.2f}%'.format(100*loan['required_return'])
         pstr += ' | IntRate: {}%'.format(loan['intRate'])
         pstr += ' | Default: {:1.2f}%'.format(100*loan['default_risk'])
         pstr += ' | Prepay: {:1.2f}%'.format(100*loan['prepay_risk'])
-        pstr += ' | Invested: ${}'.format(loan['invested_amount'])
-        pstr += ' | Staged: ${}'.format(loan['staged_amount'])
+        if loan['invested_amount']:
+            pstr += ' | Invested: ${}'.format(loan['invested_amount'])
+        if loan['staged_amount']:
+            pstr += ' | Staged: ${}'.format(loan['staged_amount'])
 
         pstr += '\nLoanAmnt: ${:1,.0f}'.format(loan['loanAmount'])
         pstr += ' | Term: {}'.format(loan['term'])

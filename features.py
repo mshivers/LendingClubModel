@@ -172,7 +172,7 @@ class OddsFeature(object):
         tok_mean = (value_sum + C * global_mean) / (tok_count + C)
         odds = tok_mean - global_mean
 
-        # the random forest to overfit to those.
+        # only use common tokens to prevent the random forest from overfitting.
         odds = odds[tok_count>100]
         self.odds_dict = defaultdict(lambda :0, odds.to_dict())
 
@@ -223,6 +223,7 @@ class SimpleFeatures(object):
             data['credit_length'] = (dt.now() - earliest_credit).total_seconds() / seconds_per_year
             data['even_loan_amnt'] = float(data['loanAmount'] == np.round(data['loanAmount'],-3))
 
+        # these formulas work on both API and historical data
         data['int_pymt'] = data['loanAmount'] * data['intRate'] / 1200.0
         data['revol_bal-loan'] = data['revolBal'] - data['loanAmount']
         data['inc_pct_med_inc'] = data['annualInc'] / data['census_median_income']

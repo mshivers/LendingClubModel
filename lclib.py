@@ -4,6 +4,8 @@ from personalized import p
 from session import Session
 import requests
 import utils 
+import numpy as np
+from time import sleep
 
 class LendingClub(object):
 
@@ -15,8 +17,21 @@ class LendingClub(object):
         self.key = p.get_key(account)
         self._pass = p.get_pass(account)
         self.session = Session(email=self.email, password=self._pass) 
-        self.session.authenticate()
+        self.attempt_to_authenticate()
             
+    def attempt_to_authenticate(self):
+        count = 1
+        success = False
+        while (success==False and count < 5):
+            print '{} login attempt #{}'.format(self.account_type, count) 
+            try:
+                success = self.session.authenticate()
+                print 'Login succeeded'
+            except:
+                print 'Login Failed'
+                sleep(3) 
+            count += 1
+
     def get_listed_loans(self, new_only=True):
         loans = []
         try:
@@ -127,7 +142,8 @@ class APIDataParser(object):
                               'investorCount',
                               'annualIncJoint',
                               'housingPayment',
-                              'mtgPayment'
+                              'mtgPayment',
+                              'reviewStatusD'
                               ]
         self.required_nonzero = [
                                  'annualInc', 
@@ -186,6 +202,12 @@ class APIDataParser(object):
         for k in self.required_nonzero:   #these fields are denominators of simple features
             if data[k] <= 0:
                 valid = False
+
+        # use joint info where both exist:
+        if data['dtiJoint'] is not None:
+            data['dti'] = data['dtiJoint']
+        if data['annualIncJoint'] is not None:
+            data['annualInc'] = data['annualIncJoint']
 
         #API empLength is given in months. Convert to years
         if data['empLength'] not in range(-1, 11):

@@ -19,8 +19,7 @@ run curves.py::DefaultCurve.estimate_from_payments()
 run curves.py::PrepayCurve.estimate_from_payments()
 
 # build the random forest models for defaults and prepayments;
-run build_default_rf.py
-run build_prepayment_rf.py
+run build_random_forests.py
 
 To push to prod, just copy entire training_data directory into a new directory, and make sure the model_dir path in lc.py::main() points there.
 

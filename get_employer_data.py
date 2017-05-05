@@ -13,11 +13,15 @@ from constants import color
 class PausedAccount(LendingClub):
     def __init__(self, account):
         LendingClub.__init__(self, account)
-        self.next_call = dt.now()
+        self.set_next_call()
+
+    def set_next_call(self):
+        sleep_seconds = self.sleep_time()
+        self.next_call = dt.now() + td(seconds=sleep_seconds)
 
     def sleep_time(self):
-        mean = 15.0 
-        exp_mean = np.random.choice(1.0 / np.linspace(1/300., 1, 100)) 
+        mean = 30.0 
+        exp_mean = np.random.choice(1.0 / np.linspace(1/60., 1/2., 10)) 
         sleep_time = mean + np.random.exponential(exp_mean)
         return sleep_time 
  
@@ -27,8 +31,7 @@ class PausedAccount(LendingClub):
     def get_name(self, id):
         if dt.now() >= self.next_call:
             name = self.get_employer_name(id)
-            sleep_seconds = self.sleep_time()
-            self.next_call = dt.now() + td(seconds=sleep_seconds)
+            self.set_next_call() 
         else:
             print 'get_name called too soon for {}'.format(self.account_type)
             wait = self.seconds_to_wake()
@@ -63,8 +66,8 @@ def acc_sleep_string(accounts, last_acc):
         incr_str = '{}: {}'.format(acc_type, to_str(slp))
         trailing_spaces = ' ' * max(0, 16 - len(incr_str))
         incr_str += trailing_spaces
-        if acc==last_acc:
-            incr_str = color.RED + color.BOLD + incr_str + color.END
+        #if acc==last_acc:
+        #    incr_str = color.RED + color.BOLD + incr_str + color.END
         out += incr_str 
     
     wake = min(tms, key=lambda x: x[1])
@@ -75,13 +78,12 @@ def acc_sleep_string(accounts, last_acc):
 def update(max_num=1000):
     if max_num is None:
         max_num=99999
-    acct_names = ['tax', 'ira'] + ['hjg']
-    acct_names = sorted(acct_names)
+    acct_names = [np.random.choice(['tax', 'ira', 'hjg'])] * 3
 
     accounts = list()
     for i in range(len(acct_names)):
         accounts.append(PausedAccount(acct_names[i%len(acct_names)]))
-    #accounts = [LendingClub('tax'), LendingClub('ira'), LendingClub('hjg')] 
+        sleep(10)
     accs = len(accounts)
 
     emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/SCRAPE_FILE.txt')

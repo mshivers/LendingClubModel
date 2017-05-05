@@ -13,6 +13,8 @@ from matplotlib import pyplot as plt
 
 class CashFlowModel(object):
     required_fields = ['term', 'intRate', 'default_risk', 'prepay_risk']
+    income_tax_rate = 0.5
+    write_off_tax_shield = 0.0  #0.2
 
     def __init__(self, model_dir=None):
         self.model_dir = model_dir
@@ -30,8 +32,6 @@ class CashFlowModel(object):
         with a percentage fully prepaying each month and a percentage defaulting each month.'''
 
         net_payment_pct = 0.99  #LC charges 1% fee on all incoming payments
-        income_tax_rate = 0.5
-        capital_gains_tax_rate = 0.2
 
         monthly_int_rate = int_rate/1200.
         pmt = np.pmt(monthly_int_rate, term, -1)
@@ -87,8 +87,8 @@ class CashFlowModel(object):
 
             payments[m] = interest_received + scheduled_principal_received + prepay_amount_this_month
 
-            taxes_this_month = interest_received * net_payment_pct * income_tax_rate 
-            taxes_this_month = taxes_this_month - default_amount_this_month * capital_gains_tax_rate
+            taxes_this_month = interest_received * net_payment_pct * self.income_tax_rate 
+            taxes_this_month = taxes_this_month - default_amount_this_month * self.write_off_tax_shield
             payments_after_tax[m] = payments[m] - taxes_this_month 
             
         # reduce payments by lending club service charge
@@ -469,4 +469,6 @@ class PrepayCurve(object):
        
         
 
-
+if __name__ == '__main__':
+    DefaultCurve().estimate_from_payments()
+    PrepayCurve().estimate_from_payments()

@@ -12,9 +12,12 @@ import scipy.signal
 from matplotlib import pyplot as plt
 import utils
 from personalized import p
+import lclib
 import datalib
-from constants import PathManager as paths
-from features import OddsFeature, FrequencyFeature
+import constants
+import features
+ 
+paths = constants.paths
 
 def load_training_data(regen=False):
     fname = paths.get_file('training')
@@ -31,16 +34,25 @@ def load_training_data(regen=False):
     return df
 
 def load_base_features_data():
-    df = pd.read_csv(paths.get_file('base'), header=0, index_col=0)
+    fname = paths.get_file('base')
+    if not os.path.exists(fname):
+        cache_base_features_data()
+    df = pd.read_csv(fname, header=0, index_col=0)
     if 'id' in df.columns:
         df = df.set_index('id')
     return df
 
 def load_loanstats_data():
     fname = paths.get_file('loanstats')
+    if not os.path.exists(fname):
+        cache_loanstats()
     df = pd.read_csv(fname, header=0, index_col=0)
     if 'id' in df.columns:
         df = df.set_index('id')
+    #convert datetime fields
+    date_cols = ['issue_d', 'last_pymnt_d', 'earliestCrLine']
+    for col in date_cols:
+        df[col] = df[col].apply(lambda x: dt.strptime(x, '%Y-%m-%d %H:%M:%S'))
     return df
 
 def load_employer_names():
@@ -55,10 +67,9 @@ def load_payments(cols=None):
 
 def cache_loanstats():
     '''This assembles the LC data and adds standard fields that don't change'''
-    #rename columns to match API fields
-    ref_data = datalib.ReferenceData() 
-    col_name_map = ref_data.get_loanstats2api_map()
 
+    #rename columns to match API fields
+    col_name_map = datalib.ReferenceData().get_loanstats2api_map()
     def clean_raw_data(df):
         df = df.rename(columns=col_name_map)
         idx1 = ~(df[['last_pymnt_d', 'issue_d', 'annualInc']].isnull()).any(1)
@@ -108,22 +119,27 @@ def cache_base_features_data():
     df = load_loanstats_data()
     
     #only keep data old enough to have 12m prepayment and default data
-    idx = df['issue_d'] <= dt.now() - td(days=366)
+    idx = df['issue_d'] <= (dt.now() - td(days=366))
     df = df.ix[idx].copy()
 
-    api_parser = datalib.APIDataParser()
+    api_parser = lclib.APIDataParser()
     for field in api_parser.null_fill_fields():
         if field in df.columns:
             fill_value = api_parser.null_fill_value(field)
             print 'Filling {} nulls with {}'.format(field, fill_value)
             df[field] = df[field].fillna(fill_value)
 
-    string_converter = datalib.StringToConst()
+    string_converter = constants.StringToConst()
     for col in string_converter.accepted_fields:
         if col in df.columns:
             print 'Converting {} string to numeric'.format(col)
             func = np.vectorize(string_converter.convert_func(col))
             df[col] = df[col].apply(func)
+
+    # for joint applications, use dtiJoint and annualIncJoint instead of dti and annualInc 
+    joint = ~df['dtiJoint'].isnull()
+    df.ix[joint, 'dti'] = df.ix[joint, 'dtiJoint']
+    df.ix[joint, 'annualInc'] = df.ix[joint, 'annualIncJoint']
    
     df['empTitle'] = df['empTitle'].apply(utils.format_title)
     df['empTitle_length'] = df['empTitle'].apply(lambda x: len(x))
@@ -131,7 +147,7 @@ def cache_base_features_data():
     # Calculate target values for various prediction models
     # add default info
     print 'Calculating Target model target values'
-    df['wgt_default'] = df['loan_status'].apply(DefaultProb.by_status) 
+    df['wgt_default'] = df['loan_status'].apply(constants.DefaultProb.by_status) 
 
     # we want to find payments strictly less than 1 year, so we use 360 days here.
     just_under_one_year = 360*24*60*60*1e9  
@@ -181,12 +197,12 @@ def cache_base_features_data():
     df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['addrZip'].apply(lambda x: str(int(x))))]
      
     print 'Adding Census data'
-    df['census_median_income'] = df['addrZip'].apply(ref_data.get_median_income)
+    func = datalib.ReferenceData().get_median_income
+    df['census_median_income'] = df['addrZip'].apply(func)
 
     # Add calculated features 
-    print 'Adding Binary Features'
-    binary_features = BinaryFeatures()
-    binary_features.calc(df)
+    print 'Adding Simple Features'
+    features.SimpleFeatures().calc(df)
 
     # tag data for in-sample and oos (in sample issued at least 14 months ago. Issued 12-13 months ago is oos
     df['in_sample'] = df['issue_d'] < dt.now() - td(days=14*31)
@@ -206,7 +222,7 @@ def add_model_features_to_cache(df=None):
     sample = (df.in_sample)
     subGrade_mean = df.ix[sample].groupby('subGrade')['12m_wgt_default'].transform(lambda x:x.mean())
     values = df.ix[sample, '12m_wgt_default'] - subGrade_mean 
-    odds = OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='default')
+    odds = features.OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='default')
     odds.fit(strings=df.ix[sample, 'empTitle'].values, values=values)
     odds.save(training_data_dir)
     df[odds.feature_name] = df[odds.string_name].apply(odds.calc)
@@ -222,14 +238,14 @@ def add_model_features_to_cache(df=None):
     beta = np.linalg.lstsq(X, target)[0]
     prediction = X.dot(beta)
     values = (target - prediction)
-    odds = OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='prepay')
+    odds = features.OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='prepay')
     odds.fit(df.ix[sample, 'empTitle'].values, values=values)
     odds.save(training_data_dir)
     df[odds.feature_name] = df[odds.string_name].apply(odds.calc)
 
     #process frequency features
     print 'Adding frequency features'
-    freq = FrequencyFeature(string_name='empTitle')
+    freq = features.FrequencyFeature(string_name='empTitle')
     freq.fit(df.ix[df.in_sample, 'empTitle'].values)
     freq.save(training_data_dir)
     df[freq.feature_name] = df[freq.string_name].apply(freq.calc)

@@ -11,13 +11,70 @@ import pandas as pd
 from personalized import p  
 
 
+import os
+import json
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime as dt
+from datetime import timedelta as td
+from collections import defaultdict, Counter
+from personalized import p
+from constants import PathManager
+from datalib import ReferenceData
+
+''' This loads the monthly employment data for the trailing 14 months '''
+print 'Downloading BLS data from bls.gov'
+#link = 'http://www.bls.gov/lau/laucntycur14.txt'
+link = 'http://www.bls.gov/web/metro/laucntycur14.txt'
+cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
+    'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
+file = requests.get(link)
+rows = [l.split('|') for l in file.text.split('\r\n') if l.startswith(' CN')]
+data =pd.DataFrame(rows, columns=cols)
+data['Period'] = data['Period'].apply(lambda x:dt.strptime(x.strip()[:6],'%b-%y'))
+
+# keep only most recent 12 months; note np.unique also sorts
+min_date = np.unique(data['Period'])[1]
+data = data[data['Period']>=min_date]
+
+# reduce Code to just state/county fips number
+data['FIPS'] = data['Code'].apply(lambda x: int(x.strip()[2:7]))
+
+# convert numerical data to floats
+to_float = lambda x: float(str(x).replace(',',''))
+for col in ['CLF', 'Unemployed']:
+    data[col] = data[col].apply(to_float)
+data = data.ix[:,['Period','FIPS','CLF','Unemployed']]
+labor_force = data.pivot('Period', 'FIPS','CLF')
+unemployed = data.pivot('Period', 'FIPS', 'Unemployed')
+
+avg_urate_ttm = dict()
+urate= dict()
+urate_chg = dict()
+z2f = ReferenceData().get_zip3_to_fips()
+for z, fips in z2f.items():
+    avg_unemployed = unemployed.ix[1:,fips].sum(1).sum(0) 
+    avg_labor_force = labor_force.ix[1:,fips].sum(1).sum(0)
+    avg_urate_ttm[z] = avg_unemployed / avg_labor_force 
+    urate[z] =  unemployed.ix[-1,fips].sum(0) / labor_force.ix[-1,fips].sum(0)
+    last_year_ur =  unemployed.ix[1,fips].sum(0) / labor_force.ix[1,fips].sum(0)
+    urate_chg[z] = urate[z] - last_year_ur
+
+summary = pd.DataFrame({'avg':pd.Series(avg_urate_ttm),
+                        'current':pd.Series(urate),
+                        'chg12m':pd.Series(urate_chg)})
+summary.index.name = 'zip3'
+
+
+
+'''
 allpmts = open('data/loanstats/PMTHIST_ALL_20170315.csv', 'r'). readline().strip().upper().split(',')
 invpmts = open('data/loanstats/PMTHIST_INVESTORS_20170417.csv', 'r'). readline().strip().upper().split(',')
 
 inota = sorted([f for f in invpmts if f not in allpmts])
 anoti = sorted([f for f in allpmts if f not in invpmts])
 
-'''
 emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/combined_data.txt')
 comb_data = pd.read_csv(emp_data_file, sep='|', header=0, index_col=None)
 comb_ids = set(comb_data['id'].values)

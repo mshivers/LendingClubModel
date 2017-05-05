@@ -26,6 +26,7 @@ class PathManager(object):
     data_dir = os.path.join(p.parent_dir, 'data')
     loanstats_dir = os.path.join(p.parent_dir, 'data/loanstats')
     training_data_dir = os.path.join(p.parent_dir, 'data/training_data')
+    prod_dir = os.path.join(p.parent_dir, 'data/prod')
     reference_data_dir = os.path.join(p.parent_dir, 'data/reference_data')
     bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
     fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
@@ -35,6 +36,7 @@ class PathManager(object):
     base_data_file = os.path.join(training_data_dir, 'base_data.csv')
     loanstats_data_file = os.path.join(loanstats_dir, 'loanstats_data.csv')
     employer_data_file = os.path.join(loanstats_dir, 'scraped_data/backoffice_employers.csv')
+    require_returns_json = os.path.join(saved_prod_data_dir, 'required_returns.json')
 
     def __init__(self):
         pass
@@ -53,6 +55,8 @@ class PathManager(object):
             return cls.fhfa_data_dir
         elif item=='training':
             return cls.training_data_dir
+        elif item=='prod':
+            return cls.prod_dir
         else:
             return -1
 
@@ -68,6 +72,8 @@ class PathManager(object):
             return cls.loanstats_data_file
         elif item == 'employer_data': 
             return cls.employer_data_file
+        elif item == 'required_returns': 
+            return cls.require_returns_json
         else:
             return -1
 
@@ -85,7 +91,8 @@ class StringToConst(object):
                                 'isIncVJoint',
                                 'initialListStatus',
                                 'empLength',
-                                'addrZip']
+                                'addrZip',
+                                'applicationType']
         self.home_map = dict([('ANY', 0), ('NONE',0), ('OTHER',0), 
                               ('RENT',1), ('MORTGAGE',2), ('OWN',3)])
         self.purpose_dict = defaultdict(lambda :np.nan)
@@ -112,6 +119,7 @@ class StringToConst(object):
         self.income_verification = loanstats_verification_dict
         self.income_verification.update(api_verification_dict)
         self.init_status_dict = dict([('f',0), ('F',0), ('w',1), ('W',1)])
+        self.application_type_dict = dict([('DIRECT_PAY', -1), ('INDIVIDUAL', 0), ('JOINT', 1)])
 
     def _convert_empLength(self, value):
         value=value.replace('< 1 year', '0')
@@ -123,6 +131,9 @@ class StringToConst(object):
     
     def _convert_grade(self, value):
         return self.grade_map[value]
+
+    def _convert_application_type(self, value):
+        return self.application_type_dict[value]
 
     def _convert_homeOwnership(self, value):
         return self.home_map[value.upper()]
@@ -151,6 +162,9 @@ class StringToConst(object):
             value = value.lower().replace(' ', '_')
             if value in self.purpose_dict.keys():
                 return self.purpose_dict[value]
+        elif field == 'applicationType':
+            if value in self.application_type_dict.keys():
+                return self.application_type_dict[value]
         elif field == 'grade':
             if value in self.grade_map.keys():
                 return self.grade_map[value]
@@ -175,6 +189,8 @@ class StringToConst(object):
             return lambda x: self.home_map[x]
         elif field == 'purpose':
             return lambda x: self.purpose_dict[x.lower().replace(' ', '_')]
+        elif field == 'applicationType':
+            return lambda x: self.application_type_dict[x]
         elif field == 'grade':
             return lambda x: self.grade_map[x]
         elif field == 'subGrade':

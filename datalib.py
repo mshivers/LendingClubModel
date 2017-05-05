@@ -143,7 +143,7 @@ class CurrentBLSData(object):
         try:
             ''' This loads the monthly employment data for the trailing 14 months '''
             print 'Downloading BLS data from bls.gov'
-            link = 'http://www.bls.gov/lau/laucntycur14.txt'
+            #link = 'http://www.bls.gov/lau/laucntycur14.txt'
             link = 'http://www.bls.gov/web/metro/laucntycur14.txt'
             cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
                 'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
@@ -170,7 +170,7 @@ class CurrentBLSData(object):
             avg_urate_ttm = dict()
             urate= dict()
             urate_chg = dict()
-            z2f = load_z2f()
+            z2f = ReferenceData().get_zip3_to_fips()
             for z, fips in z2f.items():
                 avg_unemployed = unemployed.ix[1:,fips].sum(1).sum(0) 
                 avg_labor_force = labor_force.ix[1:,fips].sum(1).sum(0)
@@ -241,6 +241,10 @@ class ReferenceData(object):
     @classmethod
     def get_cbsa_list(cls, zip3):
         return cls._zip3_to_cbsa[zip3]
+
+    @classmethod
+    def get_zip3_to_fips(cls):
+        return cls._zip3_to_fips
 
     @classmethod
     def load_zip3_to_location_name(cls):
