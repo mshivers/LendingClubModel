@@ -11,17 +11,23 @@ from personalized import p
 from constants import color
 
 class PausedAccount(LendingClub):
+    url = 'https://www.lendingclub.com/browse/browse.action'
+    url2 = 'https://www.lendingclub.com/foliofn/tradingInventory.action'
     def __init__(self, account):
         LendingClub.__init__(self, account)
+        sleep(2)
+        self.session.get(self.url)
         self.set_next_call()
+        self.auth_count = 1
+        self.name_count = 0
 
     def set_next_call(self):
         sleep_seconds = self.sleep_time()
         self.next_call = dt.now() + td(seconds=sleep_seconds)
 
     def sleep_time(self):
-        mean = 30.0 
-        exp_mean = np.random.choice(1.0 / np.linspace(1/60., 1/2., 10)) 
+        mean = 6.0 
+        exp_mean = np.random.choice(1.0 / np.linspace(1/5., 1, 10)) 
         sleep_time = mean + np.random.exponential(exp_mean)
         return sleep_time 
  
@@ -29,18 +35,24 @@ class PausedAccount(LendingClub):
         return max(0, (self.next_call - dt.now()).total_seconds())
 
     def get_name(self, id):
-        if dt.now() >= self.next_call:
-            name = self.get_employer_name(id)
-            self.set_next_call() 
-        else:
-            print 'get_name called too soon for {}'.format(self.account_type)
+        self.name_count += 1
+        if dt.now() < self.next_call:
             wait = self.seconds_to_wake()
             sleep(wait)
-            name = self.get_name(id)
+        name = self.get_employer_name(id)
+        self.set_next_call()
+        if name == None:
+            sleep(5)
+            self.session.get(self.url)
+            self.auth_count += 1
+            wait = self.seconds_to_wake()
+            sleep(wait)
+            name = self.get_employer_name(id)
+            self.set_next_call()
         return name
 
 def sleep_func(tm):
-    incr = 5
+    incr = 30 
     while tm > incr:
         sleep(incr)
         minutes_remaining = tm/60
@@ -75,54 +87,63 @@ def acc_sleep_string(accounts, last_acc):
     return out
 
 
-def update(max_num=1000):
+def update(max_num=1000, max_fails=3):
     if max_num is None:
         max_num=99999
-    acct_names = [np.random.choice(['tax', 'ira', 'hjg'])] * 3
-
-    accounts = list()
-    for i in range(len(acct_names)):
-        accounts.append(PausedAccount(acct_names[i%len(acct_names)]))
-        sleep(10)
-    accs = len(accounts)
+    acct_names = np.random.choice(['tax', 'ira', 'hjg'], 1, replace=True) 
 
     emp_data_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/SCRAPE_FILE.txt')
-    emp_data = pd.read_csv(emp_data_file, sep='|', header=0, index_col=None)
+    emp_data = pd.read_csv(emp_data_file, sep='|', header=None, names=['id', 'employer'], index_col=None)
     existing_ids = set(emp_data['id'].values)
 
     remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/remaining_ids.txt')
-    remaining_ids = set([int(r) for r in open(remaining_id_file, 'r').read().split('\n')])
+    #remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/relisted_ids.txt')
+    #remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/all_ids.txt')
+    remaining_ids = set(np.loadtxt(remaining_id_file).astype(int))
     remaining_ids = remaining_ids.difference(existing_ids) 
 
     N = len(remaining_ids)
     print 'Need {} more datapoints'.format(N)
 
-    last_acc = accounts[0]
-    with open(emp_data_file, 'a') as f:
-        for i, id in enumerate(remaining_ids):
-            if i>max_num:
-                break
-            next_call, next_acc = min([(acc.next_call, acc) for acc in accounts])
-            sleep_time = max(0, (next_acc.next_call - dt.now()).total_seconds())
-            print acc_sleep_string(accounts, last_acc)
-            sleep_func(sleep_time)
-            company = next_acc.get_name(id)
-            if company is None:
-                accounts.remove(next_acc)
-                if len(accounts) == 0:
-                    break 
-            else:
-                company = company.replace('|','/')
-            last_acc = next_acc
-            write_str = '{}|{}'.format(id, company)
-            space_str = ' ' * max(0, 45 - len(write_str))
-            print N-i, i, write_str[:45], space_str,
-            f.write(write_str)
-            f.write('\n')
-            f.flush()
+    if N > 0:
+        accounts = list()
+        for i in range(len(acct_names)):
+            accounts.append(PausedAccount(acct_names[i%len(acct_names)]))
+            sleep(5)
+        accs = len(accounts)
+
+        last_acc = accounts[0]
+        with open(emp_data_file, 'a') as f:
+            for i, id in enumerate(remaining_ids):
+                if i>max_num or last_acc.auth_count >= max_fails:
+                    break
+                next_call, next_acc = min([(acc.next_call, acc) for acc in accounts])
+                sleep_time = max(0, (next_acc.next_call - dt.now()).total_seconds())
+                print acc_sleep_string(accounts, last_acc)
+                sleep_func(sleep_time)
+                company = next_acc.get_name(id)
+                if company is None:
+                    accounts.remove(next_acc)
+                    if len(accounts) == 0:
+                        break 
+                    else:
+                        continue
+                else:
+                    company = company.replace('|','/')
+                last_acc = next_acc
+                write_str = '{}|{}'.format(id, company)
+                space_str = ' ' * max(0, 45 - len(write_str))
+                print N-i, i, last_acc.auth_count, write_str[:45], space_str,
+                f.write(write_str)
+                f.write('\n')
+                f.flush()
 
 if __name__=='__main__':
     import sys
     print sys.argv
-    max_num=int(sys.argv[1])
-    update(max_num)
+    if len(sys.argv)==3:
+        max_fails = int(sys.argv[2])
+    else:
+        max_fails = 3
+    max_tries = int(sys.argv[1])
+    update(max_tries, max_fails)

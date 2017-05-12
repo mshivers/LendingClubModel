@@ -88,6 +88,7 @@ class BackOffice(object):
             series = {'numFound':grade_grp['id'].count()}
             series['loanAmount'] = grade_grp['loanAmount'].sum()
             series['meanIRR'] = grade_grp['irr'].mean()
+            series['maxIRR'] = grade_grp['irr'].max()
             series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
             series['numStaged'] = grade_grp['is_staged'].sum()
             series['reqReturn'] = grade_grp['required_return'].mean()
@@ -97,6 +98,7 @@ class BackOffice(object):
             formatters['loanAmount'] = lambda x: '${:0,.0f}'.format(x)
             formatters['meanIRR'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRRTax'] = lambda x: '{:1.2f}%'.format(100*x)
+            formatters['maxIRR'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['reqReturn'] = lambda x: '{:1.2f}%'.format(100*x)
 
             recent_loan_value = df['loanAmount'].sum()
@@ -108,7 +110,7 @@ class BackOffice(object):
 
             for loan in self.staged_loans():
                 msg_list.append(loan.detail_str())
-            msg_list.append('https://www.lendingclub.com/account/gotoLogin.action')
+            msg_list.append('https://www.lendingclub.com/')
             msg_list.append('Send at MacOSX clocktime {}'.format(dt.now()))
             msg = '\r\n\n'.join(msg_list) 
         else:
@@ -143,7 +145,7 @@ class EmployerName(object):
         self.next_call = dt.now()
       
     def sleep_seconds(self):
-        return 5
+        return 6
  
     def seconds_to_wake(self):
         return max(0, (self.next_call - dt.now()).total_seconds())
@@ -162,12 +164,10 @@ class EmployerName(object):
         name = self.account.get_employer_name(id)
         self.set_next_call_time()
         if name is None:
-            sleep(10)
-            try:
-                self.account.session.authenticate()
-            except:
-                pass
+            sleep(2)
+            self.account.session.get(self.account.session.base_url)
             self.auth_count += 1
+            sleep(2)
             name = self.account.get_employer_name(id)
             self.set_next_call_time()
         return name
@@ -175,7 +175,8 @@ class EmployerName(object):
 class Allocator(object):
     one_bps = 0.0001
     min_return = 0.08
-    participation_pct = 0.10
+    participation_pct = 0.20
+    learning_rate = 4
 
     def __init__(self, notes, cash):
         self.compute_current_allocation(notes, cash)
@@ -199,10 +200,10 @@ class Allocator(object):
 
     def raise_required_return(self, grade):
         adj = (1.0 / self.participation_pct) - 1
-        self.required_return[grade] += adj * self.one_bps
+        self.required_return[grade] += adj * self.learning_rate * self.one_bps
 
     def lower_required_return(self, grade):
-        self.required_return[grade] -= self.one_bps
+        self.required_return[grade] -= self.learning_rate * self.one_bps
         if self.required_return[grade] < self.min_return:
             self.required_return[grade] = self.min_return
 
@@ -217,7 +218,7 @@ class Allocator(object):
         loan['required_return'] = self.get_required_return(grade)
         if loan['irr'] > loan['required_return']:
             excess_yield_in_bps = max(0, loan['irr'] - loan['required_return']) / self.one_bps
-            max_invest_amount = 25 + min(125, excess_yield_in_bps)
+            max_invest_amount = 25 + min(75, excess_yield_in_bps)
             loan['max_investment'] = 25 * np.floor(max_invest_amount / 25)
             self.raise_required_return(grade)
         else:
@@ -298,10 +299,10 @@ class PortfolioManager(object):
         missing_employer_loans = [loan for loan in self.backoffice.all_loans() if loan['currentCompany'] is None]
         print '{} loans without employers found'.format(len(missing_employer_loans))
         for loan in missing_employer_loans:
-            if self.employer.auth_count < 3:
+            if self.employer.auth_count <= 10:
                 self.check_employer(loan)
 
-    def try_for_awhile(self, minutes=10, min_irr=0.09):
+    def try_for_awhile(self, minutes=10):
         start = dt.now()
         end = start + td(minutes=minutes)
         while True: 
