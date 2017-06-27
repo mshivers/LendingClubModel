@@ -87,7 +87,7 @@ def acc_sleep_string(accounts, last_acc):
     return out
 
 
-def update(max_num=1000, max_fails=3):
+def update(max_num=1000, max_fails=2):
     if max_num is None:
         max_num=99999
     acct_names = np.random.choice(['tax', 'ira', 'hjg'], 1, replace=True) 
@@ -97,8 +97,8 @@ def update(max_num=1000, max_fails=3):
     existing_ids = set(emp_data['id'].values)
 
     remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/remaining_ids.txt')
-    #remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/relisted_ids.txt')
-    #remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/all_ids.txt')
+    remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/relisted.txt')
+    remaining_id_file = os.path.join(p.parent_dir, 'data/loanstats/scraped_data/all_ids2.txt')
     remaining_ids = set(np.loadtxt(remaining_id_file).astype(int))
     remaining_ids = remaining_ids.difference(existing_ids) 
 
@@ -109,7 +109,7 @@ def update(max_num=1000, max_fails=3):
         accounts = list()
         for i in range(len(acct_names)):
             accounts.append(PausedAccount(acct_names[i%len(acct_names)]))
-            sleep(5)
+            sleep(1)
         accs = len(accounts)
 
         last_acc = accounts[0]
@@ -144,6 +144,6 @@ if __name__=='__main__':
     if len(sys.argv)==3:
         max_fails = int(sys.argv[2])
     else:
-        max_fails = 3
+        max_fails = 2
     max_tries = int(sys.argv[1])
     update(max_tries, max_fails)

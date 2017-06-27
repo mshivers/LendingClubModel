@@ -87,7 +87,7 @@ class BackOffice(object):
             grade_grp = df.groupby('subGradeString')
             series = {'numFound':grade_grp['id'].count()}
             series['loanAmount'] = grade_grp['loanAmount'].sum()
-            series['meanIRR'] = grade_grp['irr'].mean()
+            #series['meanIRR'] = grade_grp['irr'].mean()
             series['maxIRR'] = grade_grp['irr'].max()
             series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
             series['numStaged'] = grade_grp['is_staged'].sum()
@@ -96,7 +96,7 @@ class BackOffice(object):
             info_by_grade = pd.DataFrame(series)
             formatters = dict()
             formatters['loanAmount'] = lambda x: '${:0,.0f}'.format(x)
-            formatters['meanIRR'] = lambda x: '{:1.2f}%'.format(100*x)
+            #formatters['meanIRR'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRRTax'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRR'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['reqReturn'] = lambda x: '{:1.2f}%'.format(100*x)
@@ -110,7 +110,7 @@ class BackOffice(object):
 
             for loan in self.staged_loans():
                 msg_list.append(loan.detail_str())
-            msg_list.append('https://www.lendingclub.com/')
+            msg_list.append('https://www.lendingclub.com/auth/login')
             msg_list.append('Send at MacOSX clocktime {}'.format(dt.now()))
             msg = '\r\n\n'.join(msg_list) 
         else:
@@ -174,9 +174,9 @@ class EmployerName(object):
 
 class Allocator(object):
     one_bps = 0.0001
-    min_return = 0.08
+    min_return = 0.075
     participation_pct = 0.20
-    learning_rate = 4
+    learning_rate = 1
 
     def __init__(self, notes, cash):
         self.compute_current_allocation(notes, cash)
@@ -218,15 +218,15 @@ class Allocator(object):
         loan['required_return'] = self.get_required_return(grade)
         if loan['irr'] > loan['required_return']:
             excess_yield_in_bps = max(0, loan['irr'] - loan['required_return']) / self.one_bps
-            max_invest_amount = 25 + min(75, excess_yield_in_bps)
-            loan['max_investment'] = 25 * np.floor(max_invest_amount / 25)
+            max_invest_amount =  min(200, excess_yield_in_bps)
+            loan['max_investment'] = 100 + 25 * np.floor(max_invest_amount / 25)
             self.raise_required_return(grade)
         else:
             self.lower_required_return(grade)
 
 
 class PortfolioManager(object):
-    def __init__(self, model_dir=None, required_return=0.08):
+    def __init__(self, model_dir=None, new_only=True):
         self.account = lclib.LendingClub('ira')
         if model_dir is None:
             model_dir = paths.get_dir('training')
@@ -237,9 +237,10 @@ class PortfolioManager(object):
         self.backoffice = BackOffice(notes)
         self.allocator = Allocator(notes, self.cash)
         self.employer = EmployerName('hjg')        
-        self.load_old_loans()
+        if new_only:
+            self.mark_old_loans()
 
-    def load_old_loans(self):
+    def mark_old_loans(self):
         loans = self.account.get_listed_loans(new_only=False)
         print '{}: Found {} old listed loans.'.format(dt.now(), len(loans))
         for loan_data in loans:
@@ -259,10 +260,21 @@ class PortfolioManager(object):
                 self.quant.run_models(loan)
                 self.allocator.set_max_investment(loan)                    
                 self.backoffice.track(loan)
-                self.maybe_stage_loan(loan)    
+                self.maybe_stage_order(loan)    
                 loan.print_description() 
          
-    def maybe_stage_loan(self, loan):
+    def maybe_submit_order(self, loan):
+            amount_to_stage = self.backoffice.stage_amount(loan)
+            if amount_to_stage > 0:
+                amount_staged = self.account.submit_order(loan.id, amount_to_stage)
+                loan['staged_amount'] += amount_staged
+                loan['invested_amount'] += amount_staged
+                if amount_staged > 0: 
+                    print 'Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+                else:
+                    print 'Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+          
+    def maybe_stage_order(self, loan):
             amount_to_stage = self.backoffice.stage_amount(loan)
             if amount_to_stage > 0:
                 amount_staged = self.account.stage_order(loan.id, amount_to_stage)
@@ -277,7 +289,7 @@ class PortfolioManager(object):
         if loans_to_stage:
             print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
             for loan in loans_to_stage: 
-                self.maybe_stage_loan(loan)
+                self.maybe_stage_order(loan)
             for loan in loans_to_stage:
                 loan.print_description() 
     

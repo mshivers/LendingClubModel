@@ -290,5 +290,8 @@ def build_prepay_random_forest():
 
 
 if __name__ == '__main__':
+    import curves
+    curves.DefaultCurve().estimate_from_payments()
+    curves.PrepayCurve().estimate_from_payments()
     build_default_random_forest()
     build_prepay_random_forest()

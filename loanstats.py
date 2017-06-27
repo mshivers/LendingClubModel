@@ -85,13 +85,15 @@ def cache_loanstats():
     fname2 = os.path.join(loanstats_dir, 'LoanStats_securev1_{}.csv')
     dataframes = list()
     print 'Importing Raw Data Files'
-    dataframes.append(clean_raw_data(pd.read_csv(fname.format('a'), header=1)))
-    dataframes.append(clean_raw_data(pd.read_csv(fname.format('b'), header=1)))
-    dataframes.append(clean_raw_data(pd.read_csv(fname.format('c'), header=1)))
-    dataframes.append(clean_raw_data(pd.read_csv(fname.format('d'), header=1)))
+    #dataframes.append(clean_raw_data(pd.read_csv(fname.format('a'), header=1))) #2007-2011 data not used
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('b'), header=1)))  #2012-2013
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('c'), header=1)))  #2014
+    dataframes.append(clean_raw_data(pd.read_csv(fname.format('d'), header=1)))  #2015
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q1'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q2'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q3'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q4'), header=1)))
+    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2017Q1'), header=1)))
     print 'Concatenating dataframes'
     df = pd.concat(dataframes, ignore_index=True)
     print 'Dataframes imported'

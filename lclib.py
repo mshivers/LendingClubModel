@@ -70,6 +70,26 @@ class LendingClub(object):
                 notes = result.json()['myNotes']
         return notes
 
+    def submit_order(self, loan_id, amount):
+        invsted_amount = 0
+        url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/orders'.format(self.id)
+        result = requests.get(url, 
+                              headers={'Authorization': self.key,
+                                       'X-LC-LISTING-VERSION': 1.1},
+                              params={'aid':self.id,
+                                      'orders':[
+                                          {
+                                              'loanId':loan_id,
+                                              'requestedAmount':amount
+                                           }]
+                                      }
+                              )
+        if result.status_code == 200:  #success
+            result_js = result.json()
+            if 'investedAmount' in result_js.keys():
+                invested_amount = result.json()['investedAmount']
+        return invested_amount
+
 
     def stage_order(self, loan_id, amount):
         amount_staged = 0

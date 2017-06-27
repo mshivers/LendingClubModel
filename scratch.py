@@ -10,7 +10,6 @@ from constants import PathManager as paths
 import pandas as pd
 from personalized import p  
 
-
 import os
 import json
 import requests
