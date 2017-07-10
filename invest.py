@@ -14,7 +14,7 @@ from collections import defaultdict
 
 class BackOffice(object):
     loans = dict()
-    invested = defaultdict(lambda :0)
+    previous_investment = defaultdict(lambda :0)
     employers = dict() 
     
     def __init__(self, notes_owned=None):
@@ -39,7 +39,7 @@ class BackOffice(object):
     @classmethod
     def track(cls, loan):
         cls.loans[loan.id] = loan 
-        loan['invested_amount'] = cls.invested[loan.id]
+        loan['invested_amount'] = cls.previous_investment[loan.id]
         if loan.id in cls.employers.keys():
             loan['currentCompany'] = cls.employers[loan.id]
 
@@ -73,11 +73,11 @@ class BackOffice(object):
         return to_stage
 
     def stage_amount(self, loan):
-        return max(0, loan['max_investment'] - loan['staged_amount'] - self.invested[loan.id])
+        return max(0, loan['max_investment'] - loan['staged_amount'] - self.previous_investment[loan.id])
 
     def update_notes_owned(self, notes):
         for note in notes:
-            self.invested[note['loanId']] += note['noteAmount']
+            self.previous_investment[note['loanId']] += note['noteAmount']
 
     def report(self):
         recent_loans = self.recent_loans()
@@ -103,7 +103,9 @@ class BackOffice(object):
 
             recent_loan_value = df['loanAmount'].sum()
             msg_list = list()
-            msg_list.append('{} orders have been staged.'.format(len(self.staged_loans())))
+            num_staged = len(self.staged_loans())
+            value_staged = df['staged_amount'].sum()
+            msg_list.append('{} orders have been staged, totaling ${:1,.0f}.'.format(num_staged, value_staged))
             msg_list.append('{} total loans found, valued at ${:1,.0f}'.format(len(recent_loans), recent_loan_value))
 
             msg_list.append(info_by_grade.to_string(formatters=formatters, col_space=10))
@@ -219,7 +221,7 @@ class Allocator(object):
         if loan['irr'] > loan['required_return']:
             excess_yield_in_bps = max(0, loan['irr'] - loan['required_return']) / self.one_bps
             max_invest_amount =  min(200, excess_yield_in_bps)
-            loan['max_investment'] = 100 + 25 * np.floor(max_invest_amount / 25)
+            loan['max_investment'] = 150 + 25 * np.floor(max_invest_amount / 25)
             self.raise_required_return(grade)
         else:
             self.lower_required_return(grade)
@@ -251,6 +253,7 @@ class PortfolioManager(object):
             self.backoffice.track(loan)
  
     def search_for_yield(self):
+        staged = 0
         loans = self.account.get_listed_loans(new_only=True)
         new_loans = [loan for loan in loans if self.backoffice.is_new(loan)] 
         print '{}: Found {} listed loans; {} new loans.'.format(dt.now(), len(loans), len(new_loans))
@@ -260,38 +263,48 @@ class PortfolioManager(object):
                 self.quant.run_models(loan)
                 self.allocator.set_max_investment(loan)                    
                 self.backoffice.track(loan)
-                self.maybe_stage_order(loan)    
+                staged += self.maybe_stage_order(loan)    
+                #self.maybe_submit_order(loan)    
                 loan.print_description() 
-         
+        if staged:
+            self.account.submit_staged_orders()
+
     def maybe_submit_order(self, loan):
-            amount_to_stage = self.backoffice.stage_amount(loan)
-            if amount_to_stage > 0:
-                amount_staged = self.account.submit_order(loan.id, amount_to_stage)
-                loan['staged_amount'] += amount_staged
-                loan['invested_amount'] += amount_staged
-                if amount_staged > 0: 
-                    print 'Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
-                else:
-                    print 'Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+        amount_staged = 0
+        amount_to_stage = self.backoffice.stage_amount(loan)
+        if amount_to_stage > 0:
+            amount_staged = self.account.submit_new_order(loan.id, amount_to_stage)
+            loan['staged_amount'] += amount_staged
+            loan['invested_amount'] += amount_staged
+            if amount_staged > 0: 
+                print 'Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+            else:
+                print 'Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+        return amount_staged
           
     def maybe_stage_order(self, loan):
-            amount_to_stage = self.backoffice.stage_amount(loan)
-            if amount_to_stage > 0:
-                amount_staged = self.account.stage_order(loan.id, amount_to_stage)
-                loan['staged_amount'] += amount_staged
-                if amount_staged > 0: 
-                    print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
-                else:
-                    print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+        amount_staged = 0
+        amount_to_stage = self.backoffice.stage_amount(loan)
+        if amount_to_stage > 0:
+            amount_staged = self.account.stage_new_order(loan.id, amount_to_stage)
+            loan['staged_amount'] += amount_staged
+            if amount_staged > 0: 
+                print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+            else:
+                print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+        return amount_staged
        
     def attempt_to_restage_loans(self):
         loans_to_stage = self.backoffice.loans_to_stage()
+        staged = 0
         if loans_to_stage:
             print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
             for loan in loans_to_stage: 
-                self.maybe_stage_order(loan)
+                staged += self.maybe_stage_order(loan)
             for loan in loans_to_stage:
                 loan.print_description() 
+        if staged:
+            self.account.submit_staged_orders()
     
     def check_employer(self, loan):
         if loan['currentCompany'] is None:
