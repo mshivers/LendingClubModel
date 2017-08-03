@@ -14,11 +14,16 @@ from collections import defaultdict
 
 class BackOffice(object):
     loans = dict()
-    previous_investment = defaultdict(lambda :0)
+    previous_ira_investment = defaultdict(lambda :0)
+    previous_tax_investment = defaultdict(lambda :0)
     employers = dict() 
     
-    def __init__(self, notes_owned=None):
-        self.update_notes_owned(notes_owned) 
+    def __init__(self, ira_notes_owned=None, tax_notes_owned=None, 
+            ira_cash=0, tax_cash=0):
+        self.ira_cash = ira_cash
+        self.tax_cash = tax_cash
+        self.update_notes_owned(ira_notes_owned, account='ira') 
+        self.update_notes_owned(tax_notes_owned, account='tax') 
         self.load_employers()
 
     def __del__(self):
@@ -39,7 +44,8 @@ class BackOffice(object):
     @classmethod
     def track(cls, loan):
         cls.loans[loan.id] = loan 
-        loan['invested_amount'] = cls.previous_investment[loan.id]
+        loan['ira_invested_amount'] = cls.previous_ira_investment[loan.id]
+        loan['tax_invested_amount'] = cls.previous_tax_investment[loan.id]
         if loan.id in cls.employers.keys():
             loan['currentCompany'] = cls.employers[loan.id]
 
@@ -60,37 +66,47 @@ class BackOffice(object):
         return [loan for loan in self.loans.values() if loan['is_new'] == True]
 
     def staged_loans(self):
-        return [loan for loan in self.all_loans() if loan['staged_amount']>0]
+        return [loan for loan in self.all_loans() if loan['staged_ira_amount']>0 or loan['staged_tax_amount']>0]
 
-    def loans_to_stage(self):
+    def loans_to_stage(self, account):
         '''returns a set of loan ids to stage'''
         to_stage = list() 
         for id, loan in self.loans.items():
-            amount = self.stage_amount(loan)
+            amount = self.stage_amount(loan, account)
             elapsed = (dt.now()-loan.init_time).total_seconds()
-            if amount > 0 and elapsed < 30 * 60:
+            if amount > 0:
                 to_stage.append(loan)
         return to_stage
 
-    def stage_amount(self, loan):
-        return max(0, loan['max_investment'] - loan['staged_amount'] - self.previous_investment[loan.id])
+    def stage_amount(self, loan, account='ira'):
+        if account == 'ira':
+            return max(0, loan['max_ira_investment'] - loan['staged_ira_amount'] - self.previous_ira_investment[loan.id])
+        elif account == 'tax':
+            return max(0, loan['max_tax_investment'] - loan['staged_tax_amount'] - self.previous_tax_investment[loan.id])
+        return 0
 
-    def update_notes_owned(self, notes):
-        for note in notes:
-            self.previous_investment[note['loanId']] += note['noteAmount']
+    def update_notes_owned(self, notes, account='ira'):
+        if account == 'ira':
+            for note in notes:
+                self.previous_ira_investment[note['loanId']] += note['noteAmount']
+        elif account == 'tax':
+            for note in notes:
+                self.previous_tax_investment[note['loanId']] += note['noteAmount']
 
     def report(self):
         recent_loans = self.recent_loans()
         if len(recent_loans) > 0:
             df = pd.DataFrame(recent_loans)
-            df['is_staged'] = (df['staged_amount'] > 0).astype(int)
+            df['is_ira_staged'] = (df['staged_ira_amount'] > 0).astype(int)
+            df['is_tax_staged'] = (df['staged_tax_amount'] > 0).astype(int)
             grade_grp = df.groupby('subGradeString')
             series = {'numFound':grade_grp['id'].count()}
             series['loanAmount'] = grade_grp['loanAmount'].sum()
             #series['meanIRR'] = grade_grp['irr'].mean()
             series['maxIRR'] = grade_grp['irr'].max()
             series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
-            series['numStaged'] = grade_grp['is_staged'].sum()
+            series['numIRA'] = grade_grp['is_ira_staged'].sum()
+            series['numTax'] = grade_grp['is_tax_staged'].sum()
             series['reqReturn'] = grade_grp['required_return'].mean()
 
             info_by_grade = pd.DataFrame(series)
@@ -104,11 +120,19 @@ class BackOffice(object):
             recent_loan_value = df['loanAmount'].sum()
             msg_list = list()
             num_staged = len(self.staged_loans())
-            value_staged = df['staged_amount'].sum()
-            msg_list.append('{} orders have been staged, totaling ${:1,.0f}.'.format(num_staged, value_staged))
-            msg_list.append('{} total loans found, valued at ${:1,.0f}'.format(len(recent_loans), recent_loan_value))
+            value_ira_staged = df['staged_ira_amount'].sum()
+            value_tax_staged = df['staged_tax_amount'].sum()
+            num_ira_staged = (df['staged_ira_amount']>0).sum()
+            num_tax_staged = (df['staged_tax_amount']>0).sum()
 
-            msg_list.append(info_by_grade.to_string(formatters=formatters, col_space=10))
+            header = 'IRA Cash: ${:1,.0f}\n'.format(self.ira_cash)
+            header += 'Tax Cash: ${:1,.0f}\n'.format(self.tax_cash)
+            header += '{} total loans found, valued at ${:1,.0f}\n'.format(len(recent_loans), recent_loan_value)
+            header += '{} IRA orders have been staged, totaling ${:1,.0f}.\n'.format(num_ira_staged, value_ira_staged)
+            header += '{} Tax orders have been staged, totaling ${:1,.0f}.'.format(num_tax_staged, value_tax_staged)
+            msg_list.append(header)
+
+            msg_list.append(info_by_grade.to_string(formatters=formatters, col_space=7))
 
             for loan in self.staged_loans():
                 msg_list.append(loan.detail_str())
@@ -176,22 +200,23 @@ class EmployerName(object):
 
 class Allocator(object):
     one_bps = 0.0001
-    min_return = 0.075
-    participation_pct = 0.20
+    min_return = 0.07
+    participation_pct = 0.10
     learning_rate = 1
 
-    def __init__(self, notes, cash):
-        self.compute_current_allocation(notes, cash)
+    def __init__(self, ira_cash=0, tax_cash=0):
+        self.ira_cash = ira_cash
+        self.tax_cash = tax_cash
         self.load_required_returns()
 
     def __del__(self):
         fname = paths.get_file('required_returns')
         json.dump(self.required_return, open(fname, 'w'), indent=4, sort_keys=True)
 
-    def compute_current_allocation(self, notes, cash):
+    def compute_current_ira_allocation(self, notes):
         notes = pd.DataFrame(notes)
         alloc = notes.groupby('grade')['principalPending'].sum()
-        alloc = alloc / (cash + alloc.sum())
+        alloc = alloc / (self.ira_cash + alloc.sum())
         alloc_dict = defaultdict(lambda :0, alloc.to_dict())
         self.current_allocation = alloc_dict
 
@@ -216,34 +241,49 @@ class Allocator(object):
             return None
 
     def set_max_investment(self, loan):
+        max_ira_invest_amount = 0
         grade = loan['subGradeString']
         loan['required_return'] = self.get_required_return(grade)
         if loan['irr'] > loan['required_return']:
             excess_yield_in_bps = max(0, loan['irr'] - loan['required_return']) / self.one_bps
-            max_invest_amount =  min(200, excess_yield_in_bps)
-            loan['max_investment'] = 150 + 25 * np.floor(max_invest_amount / 25)
+            max_ira_invest_amount =  50 + min(150, excess_yield_in_bps)
             self.raise_required_return(grade)
         else:
             self.lower_required_return(grade)
+        if self.ira_cash < 10000:
+            max_ira_invest_amount *= 0.5
+        max_ira_investment = 25 * np.floor(max_ira_invest_amount / 25)
+        loan['max_ira_investment'] = max_ira_investment
+
+        max_tax_investment = 0
+        if loan['irr_after_tax'] > 0.0250 and loan['subGradeString'] < 'C6':
+            max_tax_investment = 50 if self.tax_cash < 10000 else 100
+        loan['max_tax_investment'] = max_tax_investment
 
 
 class PortfolioManager(object):
     def __init__(self, model_dir=None, new_only=True):
-        self.account = lclib.LendingClub('ira')
+        self.ira_account = lclib.LendingClub('ira')
+        self.tax_account = lclib.LendingClub('tax')
         if model_dir is None:
             model_dir = paths.get_dir('training')
         self.model_dir = model_dir
         self.quant = Quant(self.model_dir)
-        self.cash = self.account.get_cash_balance()
-        notes = self.account.get_notes_owned()
-        self.backoffice = BackOffice(notes)
-        self.allocator = Allocator(notes, self.cash)
+
+        self.ira_cash = self.ira_account.get_cash_balance()
+        self.tax_cash = self.tax_account.get_cash_balance()
+        ira_notes = self.ira_account.get_notes_owned()
+        tax_notes = self.tax_account.get_notes_owned()
+        self.backoffice = BackOffice(ira_notes_owned=ira_notes, tax_notes_owned=tax_notes,
+                ira_cash=self.ira_cash, tax_cash=self.tax_cash)
+        self.allocator = Allocator(ira_cash=self.ira_cash, tax_cash=self.tax_cash)
+
         self.employer = EmployerName('hjg')        
         if new_only:
             self.mark_old_loans()
 
     def mark_old_loans(self):
-        loans = self.account.get_listed_loans(new_only=False)
+        loans = self.ira_account.get_listed_loans(new_only=False)
         print '{}: Found {} old listed loans.'.format(dt.now(), len(loans))
         for loan_data in loans:
             loan = Loan(loan_data)
@@ -253,8 +293,9 @@ class PortfolioManager(object):
             self.backoffice.track(loan)
  
     def search_for_yield(self):
-        staged = 0
-        loans = self.account.get_listed_loans(new_only=True)
+        ira_staged = 0
+        tax_staged = 0
+        loans = self.ira_account.get_listed_loans(new_only=True)
         new_loans = [loan for loan in loans if self.backoffice.is_new(loan)] 
         print '{}: Found {} listed loans; {} new loans.'.format(dt.now(), len(loans), len(new_loans))
         for loan_data in sorted(new_loans, key=lambda x:x['intRate'], reverse=True):
@@ -263,48 +304,62 @@ class PortfolioManager(object):
                 self.quant.run_models(loan)
                 self.allocator.set_max_investment(loan)                    
                 self.backoffice.track(loan)
-                staged += self.maybe_stage_order(loan)    
-                #self.maybe_submit_order(loan)    
+                ira_staged += self.maybe_stage_ira_order(loan)    
+                tax_staged += self.maybe_stage_tax_order(loan)    
                 loan.print_description() 
-        if staged:
-            self.account.submit_staged_orders()
+        if ira_staged:
+            self.ira_account.submit_staged_orders()
+        if tax_staged:
+            self.tax_account.submit_staged_orders()
 
-    def maybe_submit_order(self, loan):
+    def maybe_submit_ira_order(self, loan):
         amount_staged = 0
-        amount_to_stage = self.backoffice.stage_amount(loan)
+        amount_to_stage = self.backoffice.stage_amount(loan, 'ira')
         if amount_to_stage > 0:
-            amount_staged = self.account.submit_new_order(loan.id, amount_to_stage)
-            loan['staged_amount'] += amount_staged
-            loan['invested_amount'] += amount_staged
+            amount_staged = self.ira_account.submit_new_order(loan.id, amount_to_stage)
+            loan['staged_ira_amount'] += amount_staged
+            loan['ira_invested_amount'] += amount_staged
             if amount_staged > 0: 
                 print 'Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
             else:
                 print 'Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
         return amount_staged
           
-    def maybe_stage_order(self, loan):
+    def maybe_stage_ira_order(self, loan):
         amount_staged = 0
-        amount_to_stage = self.backoffice.stage_amount(loan)
+        amount_to_stage = self.backoffice.stage_amount(loan, 'ira')
         if amount_to_stage > 0:
-            amount_staged = self.account.stage_new_order(loan.id, amount_to_stage)
-            loan['staged_amount'] += amount_staged
+            amount_staged = self.ira_account.stage_new_order(loan.id, amount_to_stage)
+            loan['staged_ira_amount'] += amount_staged
             if amount_staged > 0: 
-                print 'staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+                print 'IRA: staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
             else:
-                print 'Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+                print 'IRA: Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
         return amount_staged
-       
-    def attempt_to_restage_loans(self):
-        loans_to_stage = self.backoffice.loans_to_stage()
+
+    def maybe_stage_tax_order(self, loan):
+        amount_staged = 0
+        amount_to_stage = self.backoffice.stage_amount(loan, 'tax')
+        if amount_to_stage > 0:
+            amount_staged = self.tax_account.stage_new_order(loan.id, amount_to_stage)
+            loan['staged_tax_amount'] += amount_staged
+            if amount_staged > 0: 
+                print 'Tax: staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+            else:
+                print 'Tax: Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+        return amount_staged
+
+    def attempt_to_restage_ira_loans(self):
+        loans_to_stage = self.backoffice.loans_to_stage(account='ira')
         staged = 0
         if loans_to_stage:
             print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
             for loan in loans_to_stage: 
-                staged += self.maybe_stage_order(loan)
+                staged += self.maybe_stage_ira_order(loan)
             for loan in loans_to_stage:
                 loan.print_description() 
         if staged:
-            self.account.submit_staged_orders()
+            self.ira_account.submit_staged_orders()
     
     def check_employer(self, loan):
         if loan['currentCompany'] is None:
@@ -340,7 +395,7 @@ class PortfolioManager(object):
             print 'Napping for {} seconds'.format(down_time)
             sleep(down_time)
             print '\n\nTry Again...\n\n'
-            self.attempt_to_restage_loans()
+            #self.attempt_to_restage_ira_loans()
         print 'Done trying!'
         emaillib.send_email(self.backoffice.report()) 
         self.get_remaining_employers()
@@ -348,8 +403,10 @@ class PortfolioManager(object):
 
 class Loan(dict):
     def __init__(self, features):
-        self.update({ 'max_investment': 0,
-                      'staged_amount': 0,
+        self.update({ 'max_ira_investment': 0,
+                      'max_tax_investment': 0,
+                      'staged_ira_amount': 0,
+                      'staged_tax_amount': 0,
                       'details_saved': False,
                       'email_details': False,
                       'is_new':True
@@ -371,6 +428,20 @@ class Loan(dict):
     def detail_str(self):
         loan = self
         pstr = ''
+        if (loan['ira_invested_amount'] or loan['staged_ira_amount'] or
+            loan['tax_invested_amount'] or loan['staged_tax_amount']):
+            istr = list()
+            if loan['ira_invested_amount']:
+                istr.append('IRA Invested: ${}'.format(loan['ira_invested_amount']))
+            if loan['staged_ira_amount']:
+                istr.append('IRA Staged: ${}'.format(loan['staged_ira_amount']))
+            if loan['tax_invested_amount']:
+                istr.append('Tax Invested: ${}'.format(loan['tax_invested_amount']))
+            if loan['staged_tax_amount']:
+                istr.append('Tax Staged: ${}'.format(loan['staged_tax_amount']))
+            pstr += ' | '.join(istr)
+            pstr += '\n'
+
         pstr += 'IRR: {:1.2f}%'.format(100*loan['irr'])
         pstr += ' | IRRTax: {:1.2f}%'.format(100*loan['irr_after_tax'])
         if loan['required_return']:
@@ -378,10 +449,6 @@ class Loan(dict):
         pstr += ' | IntRate: {}%'.format(loan['intRate'])
         pstr += ' | Default: {:1.2f}%'.format(100*loan['default_risk'])
         pstr += ' | Prepay: {:1.2f}%'.format(100*loan['prepay_risk'])
-        if loan['invested_amount']:
-            pstr += ' | Invested: ${}'.format(loan['invested_amount'])
-        if loan['staged_amount']:
-            pstr += ' | Staged: ${}'.format(loan['staged_amount'])
 
         pstr += '\nLoanAmnt: ${:1,.0f}'.format(loan['loanAmount'])
         pstr += ' | Term: {}'.format(loan['term'])

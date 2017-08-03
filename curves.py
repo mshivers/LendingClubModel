@@ -274,6 +274,7 @@ class DefaultCurve(object):
 
         default_curves_fname = os.path.join(paths.get_dir('training'), 'default_curves.json')
         json.dump(self.baseline_curves, open(default_curves_fname, 'w'), indent=4)
+        print 'Default curves estimated and saved'
 
 
 
@@ -466,6 +467,7 @@ class PrepayCurve(object):
         # key values need to be strings to dump to json file
         prepay_curves_fname = os.path.join(paths.get_dir('training'), 'prepay_curves.json')
         json.dump(self.baseline_curves, open(prepay_curves_fname, 'w'), indent=4)
+        print 'Prepay curves estimated and saved'
        
         
 
