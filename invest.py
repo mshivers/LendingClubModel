@@ -18,13 +18,19 @@ class BackOffice(object):
     previous_tax_investment = defaultdict(lambda :0)
     employers = dict() 
     
-    def __init__(self, ira_notes_owned=None, tax_notes_owned=None, 
-            ira_cash=0, tax_cash=0):
-        self.ira_cash = ira_cash
-        self.tax_cash = tax_cash
+    def __init__(self, ira_account, tax_account):
+        self.ira_account = ira_account 
+        self.tax_account = tax_account
+        self.ira_cash = self.ira_account.get_cash_balance()
+        self.tax_cash = self.tax_account.get_cash_balance()
+        self.ira_summary = self.ira_account.get_account_summary()
+        self.tax_summary = self.tax_account.get_account_summary()
+        ira_notes_owned = self.ira_account.get_notes_owned()
+        tax_notes_owned = self.tax_account.get_notes_owned()
         self.update_notes_owned(ira_notes_owned, account='ira') 
         self.update_notes_owned(tax_notes_owned, account='tax') 
         self.load_employers()
+        #print json.dumps(self.ira_summary, indent=4)
 
     def __del__(self):
         with open(paths.get_file('employer_data'), 'a') as f:
@@ -53,6 +59,33 @@ class BackOffice(object):
     def is_new(cls, loan):
         return loan['id'] not in cls.loans.keys()
 
+    def get_cash_balance(self, account):
+        if account=='ira':
+            return self.ira_summary['availableCash']
+        elif account=='tax':
+            return self.tax_summary['availableCash']
+        else:
+            return 0
+
+    def get_account_value(self, account):
+        if account=='ira':
+            return self.ira_summary['accountTotal']
+        elif account=='tax':
+            return self.tax_summary['accountTotal']
+        else:
+            return 0
+
+    def get_past_due_adjustment(self, account):
+        adjustment = 0
+        if account=='ira':
+            adjustment = self.ira_summary['adjustments']['adjustmentForPastDueNotes']
+        elif account=='tax':
+            adjustment = self.tax_summary['adjustments']['adjustmentForPastDueNotes']
+        return adjustment 
+        
+    def get_adjusted_value(self, account):
+        return self.get_account_value(account) - self.get_past_due_adjustment(account)
+        
     def get(self, _id):
         if _id in self.loans.keys():
             return self.loans[_id]
@@ -125,8 +158,16 @@ class BackOffice(object):
             num_ira_staged = (df['staged_ira_amount']>0).sum()
             num_tax_staged = (df['staged_tax_amount']>0).sum()
 
-            header = 'IRA Cash: ${:1,.0f}\n'.format(self.ira_cash)
-            header += 'Tax Cash: ${:1,.0f}\n'.format(self.tax_cash)
+            header = 'IRA Cash: ${:1,.0f};'.format(self.get_cash_balance('ira'))
+            header += ' Value: ${:1,.0f};'.format(self.get_account_value('ira'))
+            header += ' AdjValue: ${:1,.0f}'.format(self.get_adjusted_value('ira'))
+            header += ' (${:1,.0f})\n'.format(self.get_past_due_adjustment('ira'))
+
+            header += 'Tax Cash: ${:1,.0f};'.format(self.get_cash_balance('tax'))
+            header += ' Value: ${:1,.0f};'.format(self.get_account_value('tax'))
+            header += ' AdjValue: ${:1,.0f}'.format(self.get_adjusted_value('tax'))
+            header += ' (${:1,.0f})\n'.format(self.get_past_due_adjustment('tax'))
+
             header += '{} total loans found, valued at ${:1,.0f}\n'.format(len(recent_loans), recent_loan_value)
             header += '{} IRA orders have been staged, totaling ${:1,.0f}.\n'.format(num_ira_staged, value_ira_staged)
             header += '{} Tax orders have been staged, totaling ${:1,.0f}.'.format(num_tax_staged, value_tax_staged)
@@ -200,8 +241,8 @@ class EmployerName(object):
 
 class Allocator(object):
     one_bps = 0.0001
-    min_return = 0.07
-    participation_pct = 0.10
+    min_return = 0.075
+    participation_pct = 0.20
     learning_rate = 1
 
     def __init__(self, ira_cash=0, tax_cash=0):
@@ -223,6 +264,8 @@ class Allocator(object):
     def load_required_returns(self):
         fname = paths.get_file('required_returns')
         self.required_return = json.load(open(fname, 'r'))
+        for k, v in self.required_return.items():
+            self.required_return[k] = max(v, self.min_return)
         json.dump(self.required_return, open(fname + '.old', 'w'), indent=4, sort_keys=True)
 
     def raise_required_return(self, grade):
@@ -250,14 +293,19 @@ class Allocator(object):
             self.raise_required_return(grade)
         else:
             self.lower_required_return(grade)
-        if self.ira_cash < 10000:
+        if self.ira_cash < 5000:
             max_ira_invest_amount *= 0.5
         max_ira_investment = 25 * np.floor(max_ira_invest_amount / 25)
         loan['max_ira_investment'] = max_ira_investment
 
         max_tax_investment = 0
         if loan['irr_after_tax'] > 0.0250 and loan['subGradeString'] < 'C6':
-            max_tax_investment = 50 if self.tax_cash < 10000 else 100
+            if self.tax_cash > 10000:
+                max_tax_investment = 200
+            elif self.tax_cash > 5000:
+                max_tax_investment = 100
+            else:
+                max_tax_investment = 50
         loan['max_tax_investment'] = max_tax_investment
 
 
@@ -269,14 +317,9 @@ class PortfolioManager(object):
             model_dir = paths.get_dir('training')
         self.model_dir = model_dir
         self.quant = Quant(self.model_dir)
-
-        self.ira_cash = self.ira_account.get_cash_balance()
-        self.tax_cash = self.tax_account.get_cash_balance()
-        ira_notes = self.ira_account.get_notes_owned()
-        tax_notes = self.tax_account.get_notes_owned()
-        self.backoffice = BackOffice(ira_notes_owned=ira_notes, tax_notes_owned=tax_notes,
-                ira_cash=self.ira_cash, tax_cash=self.tax_cash)
-        self.allocator = Allocator(ira_cash=self.ira_cash, tax_cash=self.tax_cash)
+        self.backoffice = BackOffice(self.ira_account, self.tax_account)
+        self.allocator = Allocator(ira_cash=self.backoffice.get_cash_balance('ira'),
+                                   tax_cash=self.backoffice.get_cash_balance('tax'))
 
         self.employer = EmployerName('hjg')        
         if new_only:

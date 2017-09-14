@@ -61,6 +61,17 @@ class LendingClub(object):
         except:
             pass
         return cash 
+
+    def get_account_summary(self):
+        summary = {}
+        url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/summary'.format(self.id)
+        try:
+            result = requests.get(url, headers={'Authorization': self.key})
+            if result.status_code == 200:  #success
+                summary = result.json()
+        except:
+            pass
+        return summary
     
     def get_notes_owned(self):
         notes = []
