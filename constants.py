@@ -1,6 +1,7 @@
 import os
 from collections import defaultdict
 from personalized import p
+import numpy as np
 
 
 LARGE_INT = 9999 
@@ -31,7 +32,7 @@ class PathManager(object):
     bls_data_dir = os.path.join(p.parent_dir, 'data/bls_data')
     fhfa_data_dir = os.path.join(p.parent_dir, 'data/fhfa_data')
     saved_prod_data_dir = os.path.join(p.parent_dir, 'data/saved_prod_data')
-    payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20170718.csv')
+    payments_file = os.path.join(loanstats_dir, 'PMTHIST_ALL_20171018.csv')
     cached_training_data_file = os.path.join(training_data_dir, 'cached_training_data.csv')
     base_data_file = os.path.join(training_data_dir, 'base_data.csv')
     loanstats_data_file = os.path.join(loanstats_dir, 'loanstats_data.csv')
@@ -96,20 +97,20 @@ class StringToConst(object):
         self.home_map = dict([('ANY', 0), ('NONE',0), ('OTHER',0), 
                               ('RENT',1), ('MORTGAGE',2), ('OWN',3)])
         self.purpose_dict = defaultdict(lambda :np.nan)
-        self.purpose_dict.update([('credit_card', 0), ('credit_card_refinancing', 0), 
-                                  ('debt_consolidation',1), 
-                                  ('home_improvement',2), 
-                                  ('car',3), ('car_financing',3), 
-                                  ('educational',4), 
-                                  ('house',5), ('home_buying',5),
-                                  ('major_purchase',6), 
-                                  ('medical_expenses',7), ('medical',7), 
-                                  ('moving',8), ('moving_and_relocation',8), 
-                                  ('other',9),
-                                  ('renewable_energy',10), ('green_loan',10),
-                                  ('business',11),('small_business',11),
-                                  ('vacation',12), 
-                                  ('wedding',13)])
+        self.purpose_dict.update([('CREDIT_CARD', 0), ('CREDIT_CARD_REFINANCING', 0), 
+                                  ('DEBT_CONSOLIDATION',1), 
+                                  ('HOME_IMPROVEMENT',2), 
+                                  ('CAR',3), ('CAR_FINANCING',3), 
+                                  ('EDUCATIONAL',4), 
+                                  ('HOUSE',5), ('HOME_BUYING',5),
+                                  ('MAJOR_PURCHASE',6), 
+                                  ('MEDICAL_EXPENSES',7), ('MEDICAL',7), 
+                                  ('MOVING',8), ('MOVING_AND_RELOCATION',8), 
+                                  ('OTHER',9),
+                                  ('RENEWABLE_ENERGY',10), ('GREEN_LOAN',10),
+                                  ('BUSINESS',11),('SMALL_BUSINESS',11),
+                                  ('VACATION',12), 
+                                  ('WEDDING',13)])
         grades = list('ABCDEFG')
         self.grade_map = defaultdict(lambda :np.nan, zip(grades, range(len(grades))))
         subgrades = ['{}{}'.format(l,n) for l in 'ABCDEFG' for n in range(1,6)]
@@ -133,23 +134,23 @@ class StringToConst(object):
         return self.grade_map[value]
 
     def _convert_application_type(self, value):
-        return self.application_type_dict[value]
+        return self.application_type_dict[value.upper()]
 
     def _convert_homeOwnership(self, value):
         return self.home_map[value.upper()]
 
     def _convert_purpose(self, value):
         value = value.lower().replace(' ', '_')
-        return self.purpose_dict[value]
+        return self.purpose_dict[value.upper()]
 
     def _convert_subGrade(self, value):
         return self.subgrade_map[value]
 
     def _convert_inc_verification(self, value):
-        return self.income_verification[value]
+        return self.income_verification[value.upper()]
 
     def _convert_initialListStatus(self, value):
-        return self.init_status_dict[value]
+        return self.init_status_dict[value.upper()]
 
     def _convert_addrZip(self, value):
         return int(value[:3])
@@ -159,12 +160,16 @@ class StringToConst(object):
             if value.upper() in self.home_map.keys():
                 return self.home_map[value.upper()]
         elif field == 'purpose':
-            value = value.lower().replace(' ', '_')
+            value = value.replace(' ', '_').upper()
             if value in self.purpose_dict.keys():
                 return self.purpose_dict[value]
         elif field == 'applicationType':
+            value = value.replace(' ', '_').upper()
             if value in self.application_type_dict.keys():
                 return self.application_type_dict[value]
+            else:
+                import pdb
+                pdb.set_trace()
         elif field == 'grade':
             if value in self.grade_map.keys():
                 return self.grade_map[value]
@@ -188,9 +193,9 @@ class StringToConst(object):
         if field == 'homeOwnership':
             return lambda x: self.home_map[x]
         elif field == 'purpose':
-            return lambda x: self.purpose_dict[x.lower().replace(' ', '_')]
+            return lambda x: self.purpose_dict[x.upper().replace(' ', '_')]
         elif field == 'applicationType':
-            return lambda x: self.application_type_dict[x]
+            return lambda x: self.application_type_dict[x.upper()]
         elif field == 'grade':
             return lambda x: self.grade_map[x]
         elif field == 'subGrade':

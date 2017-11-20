@@ -33,13 +33,13 @@ class FeatureManager(object):
                     config = json.load(open(config_path, 'r'))
                     feature = OddsFeature(**config)
                     self.feature_models.append(feature)
-                    print 'Loaded {} model'.format(feature.feature_name)
+                    print('Loaded {} model'.format(feature.feature_name))
                 if fname.endswith('_frequency.json'):
                     config_path = os.path.join(self.model_dir, fname)
                     config = json.load(open(config_path, 'r'))
                     feature = FrequencyFeature(**config) 
                     self.feature_models.append(feature)
-                    print 'Loaded {} model'.format(feature.feature_name)
+                    print('Loaded {} model'.format(feature.feature_name))
                 if fname.endswith('_randomforest.json'):
                     config_path = os.path.join(self.model_dir, fname)
                     config = json.load(open(config_path, 'r'))
@@ -47,7 +47,7 @@ class FeatureManager(object):
                     forest_path = os.path.join(self.model_dir, pkl_file)
                     feature = RandomForestFeature(pkl_file=forest_path, **config) 
                     self.randomforests.append(feature)
-                    print 'Loaded {} model'.format(feature.feature_name)
+                    print('Loaded {} model'.format(feature.feature_name))
              
     def process_lookup_features(self, loan):
         ''' these features are simple dictionary lookup features, and quick'''
@@ -107,13 +107,13 @@ class OddsFeature(object):
     @staticmethod
     def _get_all_substrings(input_string):
         length = len(input_string)
-        return [input_string[i:j+1] for i in xrange(length) for j in xrange(i,length)]
+        return [input_string[i:j+1] for i in range(length) for j in range(i,length)]
        
     @staticmethod
     def _get_short_substrings(input_string, max_len):
         length = len(input_string)
-        return [input_string[i:j+1] for i in xrange(length) 
-                for j in xrange(i+1,length) if j-i<max_len]
+        return [input_string[i:j+1] for i in range(length) 
+                for j in range(i+1,length) if j-i<max_len]
        
     def _get_exptok_substrings(self, input_string):
         toks = list()
@@ -139,7 +139,7 @@ class OddsFeature(object):
         elif self.tok_type=='alltoks':
             toks = self._get_all_substrings(input_string) 
         elif self.tok_type=='shorttoks':
-            toks = self._get_short_substrings(input_string, 10) 
+            toks = self._get_short_substrings(input_string, 6) 
         elif self.tok_type=='exptoks':
             toks = self._get_exptok_substrings(input_string)
         elif isinstance(self.tok_type, int):
@@ -178,12 +178,12 @@ class OddsFeature(object):
 
     def calc(self, input_string):
         toks = self.get_tokens(input_string)
-        odds = np.sum(map(lambda x:self.odds_dict[x], toks))
+        odds = np.sum(self.odds_dict[x] for x in toks)
         return odds
 
     def tok_odds_array(self, input_string):
         toks = self.get_tokens(input_string)
-        odds = np.array(map(lambda x:self.odds_dict[x], toks))
+        odds = np.array(list(self.odds_dict[x] for x in toks))
         return odds
 
     def is_fit(self):
@@ -217,11 +217,13 @@ class SimpleFeatures(object):
             data['credit_length'] = ((data['issue_d'] - data['earliestCrLine']).astype(int)/one_year)
             data['credit_length'] = data['credit_length'].apply(lambda x: max(-1,round(x,0)))
             data['even_loan_amnt'] = data['loanAmount'].apply(lambda x: float(x==round(x,-3)))
+            data['empTitle_length'] = data['empTitle'].apply(len)
         else:   #API data
             earliest_credit = dt.strptime(data['earliestCrLine'].split('T')[0],'%Y-%m-%d')
             seconds_per_year = 365*24*60*60.0
             data['credit_length'] = (dt.now() - earliest_credit).total_seconds() / seconds_per_year
             data['even_loan_amnt'] = float(data['loanAmount'] == np.round(data['loanAmount'],-3))
+            data['empTitle_length'] = len(data['empTitle']) 
 
         # these formulas work on both API and historical data
         data['int_pymt'] = data['loanAmount'] * data['intRate'] / 1200.0
@@ -237,7 +239,6 @@ class SimpleFeatures(object):
         data['mort_pct_credit_limit'] = data['mort_bal'] * 1.0 / data['totHiCredLim']
         data['mort_pct_cur_bal'] = data['mort_bal'] * 1.0 / data['totCurBal']
         data['revol_bal_pct_cur_bal'] = data['revolBal'] * 1.0 / data['totCurBal']
-        data['empTitle_length'] = len(data['empTitle']) 
 
 
 class RandomForestFeature(object):
@@ -255,17 +256,17 @@ class RandomForestFeature(object):
     def validate_input_data(self, input_data):
         valid = True
         if not isinstance(input_data, dict):
-            print 'RandomForest Input Error: input must be a dict, not a {}'.format(type(input_data))
+            print('RandomForest Input Error: input must be a dict, not a {}'.format(type(input_data)))
             valid = False
 
         for field in self.required_inputs():
             if field in input_data.keys():
                 value = input_data[field]
                 if not (isinstance(value, numbers.Number) and np.isfinite(value)):
-                    print 'RandomForest Invalid Input Error: {}:{} not valid'.format(field, value)
+                    print('RandomForest Invalid Input Error: {}:{} not valid'.format(field, value))
                     valid = False
             else:
-                print 'RandomForest Missing Input Error: {} not found'.format(field)
+                print('RandomForest Missing Input Error: {} not found'.format(field))
                 valid = False
 
         return valid 
@@ -276,7 +277,7 @@ class RandomForestFeature(object):
             x = np.zeros(len(self.input_fields)) * np.nan
             for i, fld in enumerate(self.input_fields):
                 x[i] = input_data[fld]
-
+            x = x.reshape(1,-1) 
             predictions = [tree.predict(x)[0] for tree in self.random_forest.estimators_]
             prediction =  np.percentile(predictions, self.pctl)
         

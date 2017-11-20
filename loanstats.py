@@ -24,10 +24,10 @@ def load_training_data(regen=False):
     if os.path.exists(fname) and not regen:
         update_dt = dt.fromtimestamp(os.path.getmtime(fname))
         days_old = (dt.now() - update_dt).days 
-        print 'Using cached LC data created on {}; cache is {} days old'.format(update_dt, days_old)
+        print('Using cached LC data created on {}; cache is {} days old'.format(update_dt, days_old))
         df = pd.read_csv(fname, header=0, index_col=0)
     else:
-        print 'Cache not found. Generating cache from source data'
+        print('Cache not found. Generating cache from source data')
         cache_base_features_data()
         add_model_features_to_cache()
         df = load_training_data()
@@ -52,7 +52,7 @@ def load_loanstats_data():
     #convert datetime fields
     date_cols = ['issue_d', 'last_pymnt_d', 'earliestCrLine']
     for col in date_cols:
-        df[col] = df[col].apply(lambda x: dt.strptime(x, '%Y-%m-%d %H:%M:%S'))
+        df[col] = df[col].apply(lambda x: dt.strptime(x, '%Y-%m-%d'))
     return df
 
 def load_employer_names():
@@ -84,19 +84,19 @@ def cache_loanstats():
     fname = os.path.join(loanstats_dir, 'LoanStats3{}_securev1.csv')
     fname2 = os.path.join(loanstats_dir, 'LoanStats_securev1_{}.csv')
     dataframes = list()
-    print 'Importing Raw Data Files'
+    print('Importing Raw Data Files')
     #dataframes.append(clean_raw_data(pd.read_csv(fname.format('a'), header=1))) #2007-2011 data not used
-    dataframes.append(clean_raw_data(pd.read_csv(fname.format('b'), header=1)))  #2012-2013
-    dataframes.append(clean_raw_data(pd.read_csv(fname.format('c'), header=1)))  #2014
+    #dataframes.append(clean_raw_data(pd.read_csv(fname.format('b'), header=1)))  #2012-2013
+    #dataframes.append(clean_raw_data(pd.read_csv(fname.format('c'), header=1)))  #2014
     dataframes.append(clean_raw_data(pd.read_csv(fname.format('d'), header=1)))  #2015
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q1'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q2'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q3'), header=1)))
     dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2016Q4'), header=1)))
-    dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2017Q1'), header=1)))
-    print 'Concatenating dataframes'
+    #dataframes.append(clean_raw_data(pd.read_csv(fname2.format('2017Q1'), header=1)))
+    print('Concatenating dataframes')
     df = pd.concat(dataframes, ignore_index=True)
-    print 'Dataframes imported'
+    print('Dataframes imported')
  
     # clean dataframe
     cvt = dict()
@@ -109,16 +109,19 @@ def cache_loanstats():
     cvt['term'] = lambda x: int(x.strip().split(' ')[0])
 
     for col in cvt.keys():
-        print 'Parsing {}'.format(col)
+        print('Parsing {}'.format(col))
         df[col] = df[col].apply(cvt[col])
     
     df = df.set_index('id')
     df.to_csv(paths.get_file('loanstats_cache'))
+    return df
 
-def cache_base_features_data():
+def cache_base_features_data(df=None):
     '''This assembles the LC data and adds standard fields that don't change'''
     
-    df = load_loanstats_data()
+    if df is None:
+        df = load_loanstats_data()
+        print('Dataframes imported')
     
     #only keep data old enough to have 12m prepayment and default data
     idx = df['issue_d'] <= (dt.now() - td(days=366))
@@ -128,13 +131,13 @@ def cache_base_features_data():
     for field in api_parser.null_fill_fields():
         if field in df.columns:
             fill_value = api_parser.null_fill_value(field)
-            print 'Filling {} nulls with {}'.format(field, fill_value)
+            print('Filling {} nulls with {}'.format(field, fill_value))
             df[field] = df[field].fillna(fill_value)
 
     string_converter = constants.StringToConst()
     for col in string_converter.accepted_fields:
         if col in df.columns:
-            print 'Converting {} string to numeric'.format(col)
+            print('Converting {} string to numeric'.format(col))
             func = np.vectorize(string_converter.convert_func(col))
             df[col] = df[col].apply(func)
 
@@ -144,16 +147,15 @@ def cache_base_features_data():
     df.ix[joint, 'annualInc'] = df.ix[joint, 'annualIncJoint']
    
     df['empTitle'] = df['empTitle'].apply(utils.format_title)
-    df['empTitle_length'] = df['empTitle'].apply(lambda x: len(x))
-
+    
     # Calculate target values for various prediction models
     # add default info
-    print 'Calculating Target model target values'
+    print('Calculating Target model target values')
     df['wgt_default'] = df['loan_status'].apply(constants.DefaultProb.by_status) 
 
     # we want to find payments strictly less than 1 year, so we use 360 days here.
     just_under_one_year = 360*24*60*60*1e9  
-    time_to_last_pymnt = df['last_pymnt_d']-df['issue_d']
+    time_to_last_pymnt = (df['last_pymnt_d']-df['issue_d']).astype(int)
     df['12m_late'] = (df['wgt_default']>0) & (time_to_last_pymnt<just_under_one_year)
     df['12m_wgt_default'] = df['12m_late'] * df['wgt_default']
 
@@ -165,28 +167,30 @@ def cache_base_features_data():
     df.ix[prepay_12m_idx, '12m_prepay'] = 1.0
 
     # partial prepays
-    df['mob'] = np.ceil(time_to_last_pymnt.astype(int) / (just_over_12months / 12.0))
+    df['mob'] = np.ceil(time_to_last_pymnt / (just_over_12months / 12.0))
     prepayments = np.maximum(0, df['total_pymnt'] - df['mob'] * df['installment'])
     partial_12m_prepay_idx = (df['loan_status']=='Current') & (prepayments > 0)
     prepay_12m_pct = prepayments / df['loanAmount'] * (12. / np.maximum(12., df.mob))
     df.ix[partial_12m_prepay_idx, '12m_prepay'] = prepay_12m_pct[partial_12m_prepay_idx]
 
     ### Add non-LC features
-    print 'Adding BLS data'
+    print('Adding BLS data')
     bls_data_dir = paths.get_dir('bls')
     urate = pd.read_csv(os.path.join(bls_data_dir, 'urate_by_3zip.csv'), index_col=0)
     ur = pd.DataFrame(np.zeros((len(urate),999))*np.nan,index=urate.index, columns=[str(i) for i in range(1,1000)])
     ur.ix[:,:] = urate.median(1).values[:,None]
     ur.ix[:,urate.columns] = urate
-    avg_ur = pd.rolling_mean(ur, 12)
+    #avg_ur = pd.rolling_mean(ur, 12)
+    avg_ur = ur.rolling(window=12,center=False).mean()
     ur_chg = ur - ur.shift(12)
+
 
     df['urate_d'] = df['issue_d'].apply(lambda x: int(str((x-td(days=60)))[:7].replace('-','')))
     df['urate'] = [ur[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
     df['avg_urate'] = [avg_ur[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
     df['urate_chg'] = [ur_chg[a][b] for a,b in zip(df['addrZip'].apply(lambda x: str(int(x))), df['urate_d'])]
 
-    print 'Adding FHFA data'
+    print('Adding FHFA data')
     fhfa_data_dir = paths.get_dir('fhfa')
     hpa4 = pd.read_csv(os.path.join(fhfa_data_dir, 'hpa4.csv'), index_col = 0)
     mean_hpa4 = hpa4.mean(1)
@@ -195,65 +199,77 @@ def cache_base_features_data():
         hpa4[c] = mean_hpa4
 
     df['hpa_date'] = df['issue_d'].apply(lambda x:x-td(days=120))
-    df['hpa_qtr'] = df['hpa_date'].apply(lambda x: 100*x.year + x.month/4 + 1)
+    df['hpa_qtr'] = df['hpa_date'].apply(lambda x: int(100*x.year + x.month/4 + 1))
     df['hpa4'] = [hpa4.ix[a,b] for a,b in zip(df['hpa_qtr'], df['addrZip'].apply(lambda x: str(int(x))))]
      
-    print 'Adding Census data'
+    print('Adding Census data')
     func = datalib.ReferenceData().get_median_income
     df['census_median_income'] = df['addrZip'].apply(func)
 
     # Add calculated features 
-    print 'Adding Simple Features'
+    print('Adding Simple Features')
     features.SimpleFeatures().calc(df)
 
     # tag data for in-sample and oos (in sample issued at least 14 months ago. Issued 12-13 months ago is oos
     df['in_sample'] = df['issue_d'] < dt.now() - td(days=14*31)
 
-    print 'Saving base file'
+    print('Saving base file')
     df.to_csv(paths.get_file('base'))
+    return df
 
-
-def add_model_features_to_cache(df=None):
-    if df is None:
-        df = load_base_features_data() 
-        print 'Dataframes imported'
-  
+def add_emptitle_default_odds(df):
     # process job title features
-    print 'Adding empTitle default odds features (this takes a while)'
+    print('Adding empTitle default odds features (this takes a while)')
     training_data_dir = paths.get_dir('training')
     sample = (df.in_sample)
-    subGrade_mean = df.ix[sample].groupby('subGrade')['12m_wgt_default'].transform(lambda x:x.mean())
-    values = df.ix[sample, '12m_wgt_default'] - subGrade_mean 
+    subGrade_mean = df.loc[sample].groupby('subGrade')['12m_wgt_default'].transform(lambda x:x.mean())
+    values = df.loc[sample, '12m_wgt_default'] - subGrade_mean 
     odds = features.OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='default')
-    odds.fit(strings=df.ix[sample, 'empTitle'].values, values=values)
+    odds.fit(strings=df.loc[sample, 'empTitle'].values, values=values)
+    print('Saving empTitle default odds features')
     odds.save(training_data_dir)
     df[odds.feature_name] = df[odds.string_name].apply(odds.calc)
-  
+    print('Mean {} is {}'.format(odds.feature_name, df[odds.feature_name].mean()))
+    return df
+ 
+def add_emptitle_prepay_odds(df):
     # process job title features
-    print 'Adding empTitle prepay odds features (this takes a while)'
+    print('Adding empTitle prepay odds features (this takes a while)')
     training_data_dir = paths.get_dir('training')
     sample = (df.in_sample)
-    X = df.ix[sample, ['dti', 'bcUtil', 'loan_pct_income', 'revolUtil']].copy()
+    X = df.loc[sample, ['dti', 'bcUtil', 'loan_pct_income', 'revolUtil']].copy()
     X['const'] = 1
     X = X.values
-    target = df.ix[df.in_sample, '12m_prepay'].values
+    target = df.loc[df.in_sample, '12m_prepay'].values
     beta = np.linalg.lstsq(X, target)[0]
     prediction = X.dot(beta)
     values = (target - prediction)
     odds = features.OddsFeature(tok_type='shorttoks', string_name='empTitle', value_name='prepay')
-    odds.fit(df.ix[sample, 'empTitle'].values, values=values)
+    odds.fit(df.loc[sample, 'empTitle'].values, values=values)
+    print('Saving empTitle default odds features')
     odds.save(training_data_dir)
     df[odds.feature_name] = df[odds.string_name].apply(odds.calc)
+    print('Mean {} is {}'.format(odds.feature_name, df[odds.feature_name].mean()))
+    return df
+
+def add_model_features_to_cache(df=None):
+    if df is None:
+        df = load_base_features_data() 
+        print('Dataframes imported')
+  
+    df = add_emptitle_default_odds(df)
+    df = add_emptitle_prepay_odds(df)
 
     #process frequency features
-    print 'Adding frequency features'
+    print('Adding frequency features')
     freq = features.FrequencyFeature(string_name='empTitle')
-    freq.fit(df.ix[df.in_sample, 'empTitle'].values)
-    freq.save(training_data_dir)
+    freq.fit(df.loc[df.in_sample, 'empTitle'].values)
+    freq.save(paths.training_data_dir)
     df[freq.feature_name] = df[freq.string_name].apply(freq.calc)
  
-    print 'Saving cache file'
+    print('Saving cache file')
     df.to_csv(paths.get_file('training'))
+    return df
 
 
 def add_training_feature():
@@ -262,3 +278,11 @@ def add_training_feature():
     # Post code to add here
 
     df.to_csv(paths.get_file('training'))
+
+def update_all():
+    df = cache_loanstats()
+    df = cache_base_features_data(df)
+    df = add_model_features_to_cache(df)
+
+if __name__=="__main__":
+    update_all()

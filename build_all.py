@@ -92,9 +92,10 @@ dv = [
      'empTitle_frequency',
      ]
 
-def build_default_random_forest():
-    print 'Building Default Random Forest'
-    df = load_training_data()
+def build_default_random_forest(df=None):
+    print('Building Default Random Forest')
+    if df is None:
+        df = load_training_data()
 
     pctl = 65
 
@@ -106,21 +107,22 @@ def build_default_random_forest():
     #Check that all the columns exist:
     for col in required_cols:
         if col not in df.columns:
-            print col, 'is not in the cached data'
+            print(col, 'is not in the cached data')
 
-    fit_data = df.ix[:,required_cols]
+    print('{} rows before cleaning.'.format(len(df)))
+    fit_data = df.loc[:,required_cols]
     fit_data = fit_data.dropna()
 
     finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<np.inf
-    fit_data = fit_data.ix[finite]
-
-    fit_data = fit_data.sort('issue_d')
-    x_train = fit_data.ix[fit_data.in_sample,:][dv].values
-    y_train = fit_data.ix[fit_data.in_sample,:][iv].values
-    y_test = fit_data.ix[~fit_data.in_sample,:][iv].values
-    x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
-    test_int_rate = fit_data.ix[~fit_data.in_sample, 'intRate'].values
-    test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
+    fit_data = fit_data.loc[finite]
+    print('{} rows remaining after cleaning.'.format(len(fit_data)))
+    fit_data = fit_data.sort_values(by=['issue_d'])
+    x_train = fit_data.loc[fit_data.in_sample,:][dv].values
+    y_train = fit_data.loc[fit_data.in_sample,:][iv].values
+    y_test = fit_data.loc[~fit_data.in_sample,:][iv].values
+    x_test = fit_data.loc[~fit_data.in_sample,:][dv].values
+    test_int_rate = fit_data.loc[~fit_data.in_sample, 'intRate'].values
+    test_term = fit_data.loc[~fit_data.in_sample, 'term'].values
 
 
     forest = RandomForestRegressor(n_estimators=400, max_depth=None, min_samples_leaf=1000, 
@@ -132,7 +134,7 @@ def build_default_random_forest():
     predictions = [tree.predict(x_test) for tree in forest.estimators_]
     predictions = np.vstack(predictions).T  #loans X trees
 
-    test_data = fit_data.ix[~fit_data.in_sample] 
+    test_data = fit_data.loc[~fit_data.in_sample] 
     test_data['default_prob'] = pf
     test_data['default_prob_65'] = np.percentile(predictions, pctl, axis=1)
       
@@ -145,18 +147,18 @@ def build_default_random_forest():
         pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
         bottom = grp_predict<=pctl10
         top = grp_predict>=pctl90
-        bottom_default_mean = 100*sample.ix[bottom, iv].mean()
+        bottom_default_mean = 100*sample.loc[bottom, iv].mean()
         bottom_predict_mean = 100*grp_predict[bottom].mean()
-        top_default_mean = 100*sample.ix[top, iv].mean() 
+        top_default_mean = 100*sample.loc[top, iv].mean() 
         top_predict_mean = 100*grp_predict[top].mean()
-        rate_diff = sample.ix[bottom, 'intRate'].mean() - sample.ix[top, 'intRate'].mean()
+        rate_diff = sample.loc[bottom, 'intRate'].mean() - sample.loc[top, 'intRate'].mean()
         res_data.append([k, len(sample), bottom_default_mean, top_default_mean, 
                          bottom_predict_mean, top_predict_mean, rate_diff])
     cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted', 
             'rate_diff']
     res = pd.DataFrame(res_data, columns=cols)
     res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
-    print res
+    print(res)
 
     data_str = ''
     forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
@@ -173,7 +175,7 @@ def build_default_random_forest():
 
     data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
 
-    print data_str
+    print(data_str)
 
     time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
     fname = os.path.join(paths.get_dir('training'), 'default_forest_{}.txt'.format(time_str))
@@ -190,9 +192,11 @@ def build_default_random_forest():
     joblib.dump(forest, forest_fname, compress=3)
 
 
-def build_prepay_random_forest():
-    print 'Building Prepayment Random Forest'
-    df = load_training_data()
+def build_default_prepay_forest(df=None):
+    print('Building Prepayment Random Forest')
+    if df is None:
+        df = load_training_data()
+
     pctl = 50
     iv = '12m_prepay'
     extra_cols = [tmp for tmp in [iv, 'loan_status', 'mob', 'issue_d', 'grade', 'term', 'intRate', 'in_sample']
@@ -202,21 +206,21 @@ def build_prepay_random_forest():
     #Check that all the columns exist:
     for col in required_cols:
         if col not in df.columns:
-            print col, 'is not in the cached data'
+            print(col, 'is not in the cached data')
 
-    fit_data = df.ix[:,dv+extra_cols]
+    fit_data = df.loc[:,dv+extra_cols]
     fit_data = fit_data.dropna()
 
     finite = fit_data.select_dtypes(include=[np.number]).abs().max(1)<np.inf
-    fit_data = fit_data.ix[finite]
+    fit_data = fit_data.loc[finite]
 
-    fit_data = fit_data.sort('issue_d')
-    x_train = fit_data.ix[fit_data.in_sample,:][dv].values
-    y_train = fit_data.ix[fit_data.in_sample,:][iv].values
-    y_test = fit_data.ix[~fit_data.in_sample,:][iv].values
-    x_test = fit_data.ix[~fit_data.in_sample,:][dv].values
-    test_int_rate = fit_data.ix[~fit_data.in_sample, 'intRate'].values
-    test_term = fit_data.ix[~fit_data.in_sample, 'term'].values
+    fit_data = fit_data.sort_values(by=['issue_d'])
+    x_train = fit_data.loc[fit_data.in_sample,:][dv].values
+    y_train = fit_data.loc[fit_data.in_sample,:][iv].values
+    y_test = fit_data.loc[~fit_data.in_sample,:][iv].values
+    x_test = fit_data.loc[~fit_data.in_sample,:][dv].values
+    test_int_rate = fit_data.loc[~fit_data.in_sample, 'intRate'].values
+    test_term = fit_data.loc[~fit_data.in_sample, 'term'].values
 
     forest = RandomForestRegressor(n_estimators=400, max_depth=None, min_samples_leaf=1000, 
                                    verbose=2, n_jobs=8, oob_score=True, max_features=0.5)
@@ -230,7 +234,7 @@ def build_prepay_random_forest():
     predictions = [tree.predict(x_test) for tree in forest.estimators_]
     predictions = np.vstack(predictions).T  #loans X trees
 
-    test_data = fit_data.ix[~fit_data.in_sample] 
+    test_data = fit_data.loc[~fit_data.in_sample] 
     test_data['prepay_prob'] = pf
     test_data['prepay_prob'] = np.percentile(predictions, pctl, axis=1)
 
@@ -244,17 +248,17 @@ def build_prepay_random_forest():
         pctl10, grp_median, pctl90 = np.percentile(grp_predict.values, [10,50,90])
         bottom = grp_predict<=pctl10
         top = grp_predict>=pctl90
-        bottom_prepay_mean = 100*sample.ix[bottom, iv].mean()
+        bottom_prepay_mean = 100*sample.loc[bottom, iv].mean()
         bottom_predict_mean = 100*grp_predict[bottom].mean()
-        top_prepay_mean = 100*sample.ix[top, iv].mean() 
+        top_prepay_mean = 100*sample.loc[top, iv].mean() 
         top_predict_mean = 100*grp_predict[top].mean()
         res_data.append([k, len(sample), bottom_prepay_mean, top_prepay_mean, 
                          bottom_predict_mean, top_predict_mean])
     cols = ['group', 'NObs', 'decile1_actual', 'decile10_actual', 'decile1_predicted', 'decile10_predicted']
     res = pd.DataFrame(res_data, columns=cols)
     res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
-    res = res.sort('group')
-    print res
+    res = res.sort_values(by=['group'])
+    print(res)
 
     data_str = ''
     forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
@@ -271,7 +275,7 @@ def build_prepay_random_forest():
 
     data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
 
-    print data_str
+    print(data_str)
 
     time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
 
@@ -289,9 +293,9 @@ def build_prepay_random_forest():
     joblib.dump(forest, forest_fname, compress=3)
 
 
-if __name__ == '__main__':
-    import curves
-    curves.DefaultCurve().estimate_from_payments()
-    curves.PrepayCurve().estimate_from_payments()
+def update():
     build_default_random_forest()
     build_prepay_random_forest()
+
+if __name__ == '__main__':
+    update()

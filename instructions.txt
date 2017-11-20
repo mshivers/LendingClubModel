@@ -1,26 +1,26 @@
 
-run get_external_data.py to grab bls employment data and FHFA house-price data
+If you are using LendingClub data that is more recent than the last fit, run
+datalib.py::get_external_data to grab bls employment data and FHFA house-price data
 
 # Download most recent LendingClub data:
-1. download the most recent Payments History Files (All Payments version) at http://additionalstatistics.lendingclub.com/
-2. Download the Loan Data from https://www.lendingclub.com/info/download-data.action 
-   -- Make sure you're logged in to your LendingClub account wwhen you do this; you get a more restricted dataset if you are not logged in).  
-   -- Download all of the files, not just the one with the most recent loans, since these files contain current loan status for all loans.  
+1. download the most recent Payments History Files (All Payments version) at
+http://additionalstatistics.lendingclub.com/ 
+2. Download the Loan Data from
+https://www.lendingclub.com/info/download-data.action -- Make sure you're
+logged in to your LendingClub account wwhen you do this; you get a more
+restricted dataset if you are not logged in).  -- Download all of the files,
+not just the one with the most recent loans, since these files contain current
+loan status for all loans.  
 3. Unzip all the files and save to data/loanstats/
 
-In constants.py, in the class variables for the PathManager class, update the "payments_file" variable to point to the current payments csv file.
-In loanstats.py::cache_loanstats() make sure the list of files it opens includes every LoanStats file you just downloaded, and run that function.  
-Run cache_base_features() to append basic features to the loanstats data.
-Run add_model_features_to_cache() to append model-based features to the loanstats data, and save the model params files.
-This will calculate and save the log odds and ranking dictionaries to the training data directory
+In constants.py, in the class variables for the PathManager class, update the
+"payments_file" variable to point to the current payments csv file.
 
-# recalculated default and prepayment curves from investor payment data:
-run curves.py::DefaultCurve.estimate_from_payments()
-run curves.py::PrepayCurve.estimate_from_payments()
+"python loanstats.py" updates all the loan data caches 
+"python curves.py" updates the default and prepayment curves
+"python build_all.py" builds all the random forest models.
 
-# build the random forest models for defaults and prepayments;
-run build_random_forests.py
-
-To push to prod, just copy entire training_data directory into a new directory, and make sure the model_dir path in lc.py::main() points there.
+To push to prod, just copy entire training_data directory into a new directory,
+and make sure the model_dir path in lc.py::main() points there.
 
 

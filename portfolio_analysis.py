@@ -5,6 +5,7 @@ import pandas as pd
 import os
 import lclib
 import json
+import copy
 import requests
 from personalized import p
 from constants import DefaultProb
@@ -41,11 +42,16 @@ class PortfolioAnalysis(object):
                 result_js = result.json()
                 if 'myNotes' in result_js.keys():
                     notes = result.json()['myNotes']
+            updated_notes = list() 
             for note in notes:
-                note['account'] = account
-                for k,v in note.items():
+                notecopy = copy.deepcopy(note)
+                notecopy['account'] = account
+                for k in note.keys():
                     if k.endswith('Date'):
-                        note[k+'time'] = self._convert_to_date(v)
+                        date_info = note[k] 
+                        notecopy[k+'time'] = self._convert_to_date(date_info)
+                updated_notes.append(notecopy)
+            notes = updated_notes
         self.notes = notes
         self.account = account
         return notes

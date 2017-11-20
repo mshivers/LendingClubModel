@@ -9,12 +9,12 @@ def only_ascii(s):
 def reset_time():
     try:
         import os
-        print 'Attempting to adjust system time'
+        print('Attempting to adjust system time')
         response = os.popen('sudo ntpdate -u time.apple.com')
-        print response.read()
-        print 'Reset Time Successfully!'  
+        print(response.read())
+        print('Reset Time Successfully!')
     except:
-        print 'Failed to reset system time' 
+        print('Failed to reset system time')
 
 
 def clean_title(x):

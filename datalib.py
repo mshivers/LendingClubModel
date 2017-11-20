@@ -33,13 +33,13 @@ class LocationDataManager(object):
             info['hpa4'] = metro_hpa['1yr'].mean()
             info['hpa20'] = metro_hpa['5yr'].mean()
         else:
-            print 'No FHFA data found for zip code {}xx, using data for {} instead'.format(zip3, state)
+            print('No FHFA data found for zip code {}xx, using data for {} instead'.format(zip3, state))
             nonmetro_hpa = self.fhfa_data.get_nonmetro_data()
             if state in nonmetro_hpa.index:
                 info['hpa4'] = nonmetro_hpa.ix[state]['1yr']
                 info['hpa20'] = nonmetro_hpa.ix[state]['5yr']
             else:
-                print 'No nonmetro FHFA data found for {}, using national average instead'.format(state)
+                print('No nonmetro FHFA data found for {}, using national average instead'.format(state))
                 national_mean = nonmetro_hpa.mean()
                 info['hpa4'] = national_mean['1yr']
                 info['hpa20'] = national_mean['5yr']
@@ -73,7 +73,7 @@ class FHFAData(object):
                 data.to_csv(os.path.join(cls._data_dir, 'HPI_AT_nonmetro.csv'))
             except:
                 data = pd.read_csv(os.path.join(cls._data_dir,'HPI_AT_nonmetro.csv'))
-                print '{}: Failed to load FHFA nonmetro data; using cache\n'.format(dt.now())
+                print('{}: Failed to load FHFA nonmetro data; using cache\n'.format(dt.now()))
 
             grp = data.groupby('State')
             tail5 = grp.tail(21).groupby('State')['Index']
@@ -95,7 +95,7 @@ class FHFAData(object):
                 data.to_csv(os.path.join(cls._data_dir, 'HPI_AT_metro.csv'))
             except:
                 data = pd.read_csv(os.path.join(cls._data_dir,'HPI_AT_metro.csv'), skiprows=1, header=None, names=cols)
-                print '{}: Failed to load FHFA metro data; using cache\n'.format(dt.now())
+                print('{}: Failed to load FHFA metro data; using cache\n'.format(dt.now()))
             data = data[data['index']!='-']
             data['index'] = data['index'].astype(float)
             grp = data.groupby('CBSA')[['Location','CBSA', 'yr','qtr','index', 'stdev']]
@@ -148,13 +148,13 @@ class CurrentBLSData(object):
     def _load_from_bls_website(self):
         try:
             ''' This loads the monthly employment data for the trailing 14 months '''
-            print 'Downloading BLS data from bls.gov'
+            print('Downloading BLS data from bls.gov')
             #link = 'http://www.bls.gov/lau/laucntycur14.txt'
             link = 'http://www.bls.gov/web/metro/laucntycur14.txt'
             cols = ['Code', 'StateFIPS', 'CountyFIPS', 'County', 
                 'Period', 'CLF', 'Employed', 'Unemployed', 'Rate']
-            file = requests.get(link)
-            rows = [l.split('|') for l in file.text.split('\r\n') if l.startswith(' CN')]
+            raw_data = requests.get(link)
+            rows = [l.split('|') for l in raw_data.text.split('\r\n') if l.startswith(' CN')]
             data =pd.DataFrame(rows, columns=cols)
             data['Period'] = data['Period'].apply(lambda x:dt.strptime(x.strip()[:6],'%b-%y'))
 
@@ -167,12 +167,17 @@ class CurrentBLSData(object):
 
             # convert numerical data to floats
             to_float = lambda x: float(str(x).replace(',',''))
+            #import pdb
+            #pdb.set_trace()
             for col in ['CLF', 'Unemployed']:
+                data[col] = data[col].apply(lambda x: x.strip().replace('-','nan'))
                 data[col] = data[col].apply(to_float)
-            data = data.ix[:,['Period','FIPS','CLF','Unemployed']]
+            data = data.loc[:,['Period','FIPS','CLF','Unemployed']]
+            data = data.fillna(axis=0, method='ffill')
             labor_force = data.pivot('Period', 'FIPS','CLF')
             unemployed = data.pivot('Period', 'FIPS', 'Unemployed')
-            
+            import pdb
+            pdb.set_trace()
             avg_urate_ttm = dict()
             urate= dict()
             urate_chg = dict()
@@ -193,7 +198,7 @@ class CurrentBLSData(object):
             self.bls_data = summary 
 
         except:
-            print '{}: Failed to load BLS laucntycur14 data; using summary cache\n'.format(dt.now())
+            print('{}: Failed to load BLS laucntycur14 data; using summary cache\n'.format(dt.now()))
     
 
 class ReferenceData(object):
@@ -301,7 +306,8 @@ class ReferenceData(object):
         if cls._zip3_to_median_income is None:
             z2mi = json.load(open(os.path.join(cls._cache_dir, 'zip2median_inc.json'),'r'))
             z2mi = dict([(int(z), float(v)) for z,v in zip(z2mi.keys(), z2mi.values())])
-            z2mi = defaultdict(lambda :np.mean(z2mi.values()), z2mi)
+            default = np.mean([z2mi[k] for k in z2mi])
+            z2mi = defaultdict(lambda :default, z2mi)
             cls._zip3_to_median_income = z2mi
 
     @classmethod
@@ -392,7 +398,7 @@ class ReferenceData(object):
 
 def build_zip3_to_location_names():
     import bls 
-    reference_data_dir = paths.get_dir('reference')
+    reference_data_dir = PathManager.get_dir('reference')
     cw = pd.read_csv(os.path.join(reference_data_dir, 'CBSA_FIPS_MSA_crosswalk.csv'))
     grp = cw.groupby('FIPS')
     f2loc = dict([(k,list(df['CBSA Name'].values)) 
@@ -415,7 +421,7 @@ def build_zip3_to_location_names():
     json.dump(z2loc, open(os.path.join(reference_data_dir, 'zip2location.json'),'w'))
 
 def build_zip3_to_primary_city():
-    reference_data_dir = paths.get_dir('reference')
+    reference_data_dir = PathManager.get_dir('reference')
     data= pd.read_csv(os.path.join(reference_data_dir, 'zip_code_database.csv'))
     data['place'] = ['{}, {}'.format(c,s) for c,s in zip(data['primary_city'].values, data['state'].values)]
 
@@ -438,7 +444,7 @@ def build_zip3_to_primary_city():
 
 def get_external_data():
     #def build_zip3_to_hpi():
-    reference_data_dir = paths.get_dir('reference')
+    reference_data_dir = PathManager.get_dir('reference')
     z2c = pd.read_csv(os.path.join(reference_data_dir, 'zip2cbsa.csv'))
     z2c['zip3'] = z2c['ZIP'].apply(lambda x: int(x/100))
     z2c = z2c[z2c['CBSA']<99999]
@@ -453,7 +459,7 @@ def get_external_data():
     # downloads the monthly non-seasonally adjusted employment data, and saves csv files for
     # monthly labor force size, and number of unemployed by fips county code, to use to construct
     # historical employment statistics by zip code for model fitting
-    z2f = json.load(file(os.path.join(reference_data_dir, 'zip3_fips.json'),'r'))
+    z2f = json.load(open(os.path.join(reference_data_dir, 'zip3_fips.json'),'r'))
 
     #z2f values are lists themselves; this flattens it
     all_fips = []
@@ -490,7 +496,7 @@ def get_external_data():
     unemployed = county_data[county_data['measure']=='04'][['fips','yyyymm','value']]
     unemployed = unemployed.pivot('yyyymm','fips','value')
 
-    bls_data_dir = paths.get_dir('bls')
+    bls_data_dir = PathManager.get_dir('bls')
     labor_force.to_csv(os.path.join(bls_data_dir, 'labor_force.csv'))
     unemployed.to_csv(os.path.join(bls_data_dir, 'unemployed.csv'))
 

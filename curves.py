@@ -82,7 +82,7 @@ class CashFlowModel(object):
             scheduled_principal_received = contract_principal_due * performing_pct 
 
             prepay_amount_this_month = prepay_curve[m-1] 
-            prepay_percent_this_month = prepay_amount_this_month / eom_balance
+            prepay_percent_this_month = prepay_amount_this_month * 1.0 / eom_balance
             pct_prepaid_so_far += prepay_percent_this_month
 
             payments[m] = interest_received + scheduled_principal_received + prepay_amount_this_month
@@ -124,7 +124,7 @@ class DefaultCurve(object):
         if os.path.exists(curve_file):
             self.baseline_curves = json.load(open(curve_file, 'r'))
         else:
-            print 'Baseline default curves not found'
+            print('Baseline default curves not found')
 
     @staticmethod
     def get_label(grade, term):
@@ -205,11 +205,11 @@ class DefaultCurve(object):
 
     def estimate_from_payments(self):
         '''default curves'''
-        print 'Loading Payments file... this takes a while'
+        print('Loading Payments file... this takes a while')
         cols = ['LOAN_ID', 'PBAL_BEG_PERIOD', 'PBAL_END_PERIOD', 'MONTHLYCONTRACTAMT', 'InterestRate', 
                 'VINTAGE', 'IssuedDate', 'RECEIVED_AMT', 'DUE_AMT', 'PERIOD_END_LSTAT', 'MOB', 'term', 'grade']
         df = loanstats.load_payments(cols)
-        print 'Payments loaded'
+        print('Payments loaded')
 
         df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
         df['delinquent_amt'] = np.maximum(0, -(df['RECEIVED_AMT'] - df['DUE_AMT']))
@@ -255,7 +255,7 @@ class DefaultCurve(object):
             for months_paid, num in v[2]:
                defaults[i, 2+min(v[1], months_paid)] = num
             
-        cols = ['num_loans', 'max_age'] + range(61)
+        cols = ['num_loans', 'max_age'] + list(range(61))
         defaults = pd.DataFrame(data=defaults, index=index, columns=cols).reset_index()   
         issued = pd.DataFrame(data=issued, index=index, columns=cols).reset_index()    
         g_default = defaults.groupby(['term', 'grade']).sum()
@@ -274,7 +274,7 @@ class DefaultCurve(object):
 
         default_curves_fname = os.path.join(paths.get_dir('training'), 'default_curves.json')
         json.dump(self.baseline_curves, open(default_curves_fname, 'w'), indent=4)
-        print 'Default curves estimated and saved'
+        print('Default curves estimated and saved')
 
 
 
@@ -298,7 +298,7 @@ class PrepayCurve(object):
         if os.path.exists(curve_file):
             self.baseline_curves = json.load(open(curve_file, 'r'))
         else:
-            print 'Baseline prepay curves not found'
+            print('Baseline prepay curves not found')
 
     @classmethod
     def get_revol_util_bucket(cls, revol_util):
@@ -409,12 +409,12 @@ class PrepayCurve(object):
 
 
     def estimate_from_payments(self):
-        print 'Loading Payments file... this takes a while'
+        print('Loading Payments file... this takes a while')
         cols = ['LOAN_ID', 'PBAL_BEG_PERIOD', 'MONTHLYCONTRACTAMT', 'InterestRate', 
                 'VINTAGE', 'IssuedDate', 'RECEIVED_AMT', 'DUE_AMT', 'PERIOD_END_LSTAT', 'MOB', 'term', 'grade', 
                 'dti', 'HomeOwnership', 'MonthlyIncome', 'EmploymentLength', 'RevolvingLineUtilization']
         df = loanstats.load_payments(cols)
-        print 'Payments loaded'
+        print('Payments loaded')
 
         g_id = df.groupby('LOAN_ID')
         df['prepay_amt'] = np.maximum(0, df['RECEIVED_AMT'] - df['DUE_AMT'])
@@ -439,7 +439,7 @@ class PrepayCurve(object):
         prepays = prepays.join(revol_util)
 
         # clean the prepayment rows for each issue date
-        prepays = prepays.sort('IssuedDate')
+        prepays = prepays.sort_values(by=['IssuedDate'])
         for d in set(prepays['IssuedDate'].values):
             idx = prepays.IssuedDate == d
             max_mob = prepays.ix[idx, 'MOB'].max()
@@ -467,7 +467,7 @@ class PrepayCurve(object):
         # key values need to be strings to dump to json file
         prepay_curves_fname = os.path.join(paths.get_dir('training'), 'prepay_curves.json')
         json.dump(self.baseline_curves, open(prepay_curves_fname, 'w'), indent=4)
-        print 'Prepay curves estimated and saved'
+        print('Prepay curves estimated and saved')
        
         
 

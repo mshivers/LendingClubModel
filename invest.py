@@ -30,7 +30,7 @@ class BackOffice(object):
         self.update_notes_owned(ira_notes_owned, account='ira') 
         self.update_notes_owned(tax_notes_owned, account='tax') 
         self.load_employers()
-        #print json.dumps(self.ira_summary, indent=4)
+        #print(json.dumps(self.ira_summary, indent=4))
 
     def __del__(self):
         with open(paths.get_file('employer_data'), 'a') as f:
@@ -226,7 +226,7 @@ class EmployerName(object):
         self.name_count += 1
         if dt.now() < self.next_call:
             wait = self.seconds_to_wake()
-            print 'Waiting {} seconds'.format(wait)
+            print('Waiting {} seconds'.format(wait))
             sleep(wait)
         name = self.account.get_employer_name(id)
         self.set_next_call_time()
@@ -241,9 +241,10 @@ class EmployerName(object):
 
 class Allocator(object):
     one_bps = 0.0001
-    min_return = 0.075
+    min_tax_return = 0.025
+    min_ira_return = 0.06
     participation_pct = 0.20
-    learning_rate = 1
+    learning_rate = 2
 
     def __init__(self, ira_cash=0, tax_cash=0):
         self.ira_cash = ira_cash
@@ -265,7 +266,7 @@ class Allocator(object):
         fname = paths.get_file('required_returns')
         self.required_return = json.load(open(fname, 'r'))
         for k, v in self.required_return.items():
-            self.required_return[k] = max(v, self.min_return)
+            self.required_return[k] = max(v, self.min_ira_return)
         json.dump(self.required_return, open(fname + '.old', 'w'), indent=4, sort_keys=True)
 
     def raise_required_return(self, grade):
@@ -274,8 +275,8 @@ class Allocator(object):
 
     def lower_required_return(self, grade):
         self.required_return[grade] -= self.learning_rate * self.one_bps
-        if self.required_return[grade] < self.min_return:
-            self.required_return[grade] = self.min_return
+        if self.required_return[grade] < self.min_ira_return:
+            self.required_return[grade] = self.min_ira_return
 
     def get_required_return(self, grade):
         if grade in self.required_return.keys():
@@ -295,11 +296,13 @@ class Allocator(object):
             self.lower_required_return(grade)
         if self.ira_cash < 5000:
             max_ira_invest_amount *= 0.5
+        if self.ira_cash < 2000:
+            max_ira_invest_amount *= 0.5
         max_ira_investment = 25 * np.floor(max_ira_invest_amount / 25)
         loan['max_ira_investment'] = max_ira_investment
 
         max_tax_investment = 0
-        if loan['irr_after_tax'] > 0.0250 and loan['subGradeString'] < 'C6':
+        if loan['irr_after_tax'] > self.min_tax_return and loan['subGradeString'] < 'C6':
             if self.tax_cash > 10000:
                 max_tax_investment = 200
             elif self.tax_cash > 5000:
@@ -327,7 +330,7 @@ class PortfolioManager(object):
 
     def mark_old_loans(self):
         loans = self.ira_account.get_listed_loans(new_only=False)
-        print '{}: Found {} old listed loans.'.format(dt.now(), len(loans))
+        print('{}: Found {} old listed loans.'.format(dt.now(), len(loans)))
         for loan_data in loans:
             loan = Loan(loan_data)
             loan['is_new'] = False
@@ -340,7 +343,7 @@ class PortfolioManager(object):
         tax_staged = 0
         loans = self.ira_account.get_listed_loans(new_only=True)
         new_loans = [loan for loan in loans if self.backoffice.is_new(loan)] 
-        print '{}: Found {} listed loans; {} new loans.'.format(dt.now(), len(loans), len(new_loans))
+        print('{}: Found {} listed loans; {} new loans.'.format(dt.now(), len(loans), len(new_loans)))
         for loan_data in sorted(new_loans, key=lambda x:x['intRate'], reverse=True):
             loan = Loan(loan_data)
             if self.quant.validate(loan):
@@ -363,9 +366,9 @@ class PortfolioManager(object):
             loan['staged_ira_amount'] += amount_staged
             loan['ira_invested_amount'] += amount_staged
             if amount_staged > 0: 
-                print 'Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+                print('Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']))
             else:
-                print 'Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+                print('Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle']))
         return amount_staged
           
     def maybe_stage_ira_order(self, loan):
@@ -375,9 +378,9 @@ class PortfolioManager(object):
             amount_staged = self.ira_account.stage_new_order(loan.id, amount_to_stage)
             loan['staged_ira_amount'] += amount_staged
             if amount_staged > 0: 
-                print 'IRA: staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+                print('IRA: staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']))
             else:
-                print 'IRA: Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+                print('IRA: Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle']))
         return amount_staged
 
     def maybe_stage_tax_order(self, loan):
@@ -387,16 +390,16 @@ class PortfolioManager(object):
             amount_staged = self.tax_account.stage_new_order(loan.id, amount_to_stage)
             loan['staged_tax_amount'] += amount_staged
             if amount_staged > 0: 
-                print 'Tax: staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']) 
+                print('Tax: staged ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']))
             else:
-                print 'Tax: Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle'])
+                print('Tax: Attempted to Restage ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle']))
         return amount_staged
 
     def attempt_to_restage_ira_loans(self):
         loans_to_stage = self.backoffice.loans_to_stage(account='ira')
         staged = 0
         if loans_to_stage:
-            print '\n\nFound {} loans to restage'.format(len(loans_to_stage))
+            print('\n\nFound {} loans to restage'.format(len(loans_to_stage)))
             for loan in loans_to_stage: 
                 staged += self.maybe_stage_ira_order(loan)
             for loan in loans_to_stage:
@@ -407,11 +410,11 @@ class PortfolioManager(object):
     def check_employer(self, loan):
         if loan['currentCompany'] is None:
             loan['currentCompany'] = self.employer.get(loan.id)
-            print dt.now(), self.employer.name_count, self.employer.auth_count,
-            print loan['id'], loan['subGradeString'], 
+            print(dt.now(), self.employer.name_count, self.employer.auth_count,)
+            print(loan['id'], loan['subGradeString'], )
             if loan['irr'] is not None:
-                print '{:1.2f}%'.format(100*loan['irr']), 
-            print loan['empTitle'], loan['currentCompany']
+                print('{:1.2f}%'.format(100*loan['irr']), )
+            print(loan['empTitle'], loan['currentCompany'])
 
     def get_staged_employers(self):
         staged_loans = self.backoffice.staged_loans()
@@ -420,7 +423,7 @@ class PortfolioManager(object):
 
     def get_remaining_employers(self):
         missing_employer_loans = [loan for loan in self.backoffice.all_loans() if loan['currentCompany'] is None]
-        print '{} loans without employers found'.format(len(missing_employer_loans))
+        print('{} loans without employers found'.format(len(missing_employer_loans)))
         for loan in missing_employer_loans:
             if self.employer.auth_count <= 10:
                 self.check_employer(loan)
@@ -431,15 +434,15 @@ class PortfolioManager(object):
         while True: 
             self.search_for_yield()
             self.get_staged_employers()
-            print self.backoffice.report()
+            print(self.backoffice.report())
             if dt.now() > end:
                 break
             down_time = min(10, utils.sleep_seconds())
-            print 'Napping for {} seconds'.format(down_time)
+            print('Napping for {} seconds'.format(down_time))
             sleep(down_time)
-            print '\n\nTry Again...\n\n'
+            print('\n\nTry Again...\n\n')
             #self.attempt_to_restage_ira_loans()
-        print 'Done trying!'
+        print('Done trying!')
         emaillib.send_email(self.backoffice.report()) 
         self.get_remaining_employers()
 
@@ -466,7 +469,7 @@ class Loan(dict):
             return None
 
     def print_description(self):
-        print self.detail_str()
+        print(self.detail_str())
 
     def detail_str(self):
         loan = self

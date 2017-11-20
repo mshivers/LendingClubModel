@@ -25,28 +25,25 @@ class LendingClub(object):
         count = 1
         success = False
         while (success==False and count < 5):
-            print '{} login attempt #{}'.format(self.account_type, count) 
+            print('{} login attempt #{}'.format(self.account_type, count))
             try:
                 success = self.session.authenticate()
-                print 'Login succeeded'
+                print('Login succeeded')
             except:
-                print 'Login Failed'
+                print('Login Failed')
                 sleep(3) 
             count += 1
 
     def get_listed_loans(self, new_only=True):
         loans = []
-        try:
-            result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
-                                  headers={'Authorization': self.key,
-                                           'X-LC-LISTING-VERSION': 1.1},
-                                  params={'showAll': not new_only})
-            if result.status_code == 200:  #success
-                result_js = result.json()
-                if 'loans' in result_js.keys():
-                    loans = result.json()['loans']
-        except:
-            pass
+        result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
+                              headers={'Authorization': self.key,
+                                       'X-LC-LISTING-VERSION': '1.1'},
+                              params={'showAll': not new_only})
+        if result.status_code == 200:  #success
+            result_js = result.json()
+            if 'loans' in result_js.keys():
+                loans = result.json()['loans']
         return loans
 
     def get_cash_balance(self):
@@ -116,7 +113,7 @@ class LendingClub(object):
             json_response = response.json()
         except:
             log.write('{}: Failed prestage orders\n'.format(dt.now()))
-            print '\nFailed to prestage order {}\n'.format(loan_id)
+            print('\nFailed to prestage order {}\n'.format(loan_id))
             return 0
 
         if json_response['result']=='success':
@@ -296,24 +293,27 @@ class APIDataParser(object):
 
         for k in self.api_fields:
             if k not in data.keys():
-                print 'Field {} is missing'.format(k)
+                print('Field {} is missing'.format(k))
                 valid = False 
 
 
-        for k,v in data.items():
+        for k in list(data.keys()):
+            v = data[k]
             if v is None:
                 data[k] = self.null_fill_value(k) 
                 
-            if type(v) in [str, unicode]:
+            if type(v) == str:
                 if 'String' not in k:
                     data[k] = self.string_converter.convert(k, v)                
                     if data[k] != v:
                         data[u'{}String'.format(k)] = v
 
             if data[k] is None and k not in self.ok_to_be_null:
-                print 'Field {} has a null value; check api_parser defaults'.format(k)
+                import pdb
+                pdb.set_trace()
+                print('Field {} has a null value; check api_parser defaults'.format(k))
                 valid = False
-
+       
         for k in self.required_nonzero:   #these fields are denominators of simple features
             if data[k] <= 0:
                 valid = False
