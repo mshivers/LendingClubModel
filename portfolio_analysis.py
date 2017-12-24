@@ -14,7 +14,7 @@ from collections import Counter
 default_wgt = lambda n :DefaultProb.by_status(n['loanStatus'])
 
 class PortfolioAnalysis(object):
-    def __init__(self, notes=None, account=None):
+    def __init__(self, account=None, notes=None):
         self.account = account
         if notes==None:
             self.notes = self.get_notes(account)
@@ -79,7 +79,7 @@ class PortfolioAnalysis(object):
         df.ix[idx, 'firstDatetime'] = df.ix[idx, 'orderDatetime']
         df['issueMth'] = df['firstDatetime'].apply(lambda x:x.strftime('%Y%m'))
         by_status = df.groupby(['issueMth', 'loanStatus'])['principalPending'].sum().unstack()
-        invested = df.groupby('issueMth')['principalPending'].sum()
+        invested = df.groupby('issueMth')['noteAmount'].sum()
         by_status = by_status.div(invested, axis=0)
         by_status['invested'] = invested
         return by_status
@@ -186,6 +186,11 @@ def total_written_off(notes, num_months=None):
 def total_invested(notes):
     return sum([n['noteAmount'] for n in notes if n['issueDate'] is not None])
 
+def average_rate(notes):
+    issued_notes = [n for n in notes if n['issueDate'] is not None]
+    return np.sum([n['interestRate'] * n['noteAmount'] for n in issued_notes]) / total_invested(issued_notes)
+    
+
 def current_balance(notes):
     return sum([n['principalPending'] for n in notes if n['issueDate'] is not None])
 
@@ -232,6 +237,7 @@ def initial_returns(notes, num_months):
         i = total_interest_received(mth_notes, num_months)
         d = total_written_off(mth_notes, num_months)
         e = expected_write_offs(mth_notes, num_months)
+        r = average_rate(mth_notes)
         avg_balance = (p + c)/2.0 
 
         invest_days = (now - issue_dt).days
@@ -243,10 +249,10 @@ def initial_returns(notes, num_months):
         if num_months is not None:
             holding_mths = min(num_months, holding_mths)
         annualization = 12.0 / holding_mths
-        exp_ret = (1+ (i-e)/avg_balance)**(annualization) - 1
-        act_ret = (1+ (i-d)/avg_balance)**(annualization) - 1
-        out.append((m, holding_mths, p,c, int(i), int(d), int(e), act_ret, exp_ret))
-    cols = ['month', 'num_mths', 'invested', 'outstanding', 'interest', 'defaults', 
+        exp_ret = ((i-e)/p) * annualization
+        act_ret = ((i-d)/p) * annualization
+        out.append((m, holding_mths, p,c, r, int(i), int(d), int(e), act_ret, exp_ret))
+    cols = ['month', 'num_mths', 'invested', 'outstanding', 'avgRate', 'interest', 'defaults', 
             'exp_defaults', 'act_return', 'exp_return']
     df = pd.DataFrame(data=out, columns=cols) 
     return df 

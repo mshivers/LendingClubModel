@@ -82,7 +82,10 @@ class CashFlowModel(object):
             scheduled_principal_received = contract_principal_due * performing_pct 
 
             prepay_amount_this_month = prepay_curve[m-1] 
-            prepay_percent_this_month = prepay_amount_this_month * 1.0 / eom_balance
+            if eom_balance > 0:
+                prepay_percent_this_month = prepay_amount_this_month / eom_balance
+            else:
+                prepay_percent_this_month = 0.0
             pct_prepaid_so_far += prepay_percent_this_month
 
             payments[m] = interest_received + scheduled_principal_received + prepay_amount_this_month

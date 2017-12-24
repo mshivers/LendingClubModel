@@ -137,18 +137,22 @@ class BackOffice(object):
             series['loanAmount'] = grade_grp['loanAmount'].sum()
             #series['meanIRR'] = grade_grp['irr'].mean()
             series['maxIRR'] = grade_grp['irr'].max()
-            series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
+            series['minIRA'] = grade_grp['required_ira_return'].mean()
             series['numIRA'] = grade_grp['is_ira_staged'].sum()
+            series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
+            series['minTax'] = grade_grp['required_tax_return'].mean()
             series['numTax'] = grade_grp['is_tax_staged'].sum()
-            series['reqReturn'] = grade_grp['required_return'].mean()
+            order = ['numFound', 'loanAmount', 'maxIRR', 'minIRA', 
+            'numIRA', 'maxIRRTax', 'minTax', 'numTax']
 
-            info_by_grade = pd.DataFrame(series)
+            info_by_grade = pd.DataFrame(series).loc[:, order]
             formatters = dict()
             formatters['loanAmount'] = lambda x: '${:0,.0f}'.format(x)
             #formatters['meanIRR'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRRTax'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRR'] = lambda x: '{:1.2f}%'.format(100*x)
-            formatters['reqReturn'] = lambda x: '{:1.2f}%'.format(100*x)
+            formatters['minIRA'] = lambda x: '{:1.2f}%'.format(100*x)
+            formatters['minTax'] = lambda x: 'N/A' if np.isnan(x) else '{:1.2f}%'.format(100*x)
 
             recent_loan_value = df['loanAmount'].sum()
             msg_list = list()
@@ -241,8 +245,9 @@ class EmployerName(object):
 
 class Allocator(object):
     one_bps = 0.0001
-    min_tax_return = 0.025
-    min_ira_return = 0.06
+    min_return = dict()
+    min_return['tax'] = 0.025
+    min_return['ira'] = 0.07
     participation_pct = 0.20
     learning_rate = 2
 
@@ -265,50 +270,56 @@ class Allocator(object):
     def load_required_returns(self):
         fname = paths.get_file('required_returns')
         self.required_return = json.load(open(fname, 'r'))
-        for k, v in self.required_return.items():
-            self.required_return[k] = max(v, self.min_ira_return)
+        for account, returns in self.required_return.items():
+            for grade, val in returns.items(): 
+                self.required_return[account][grade] = max(val, self.min_return[account])
         json.dump(self.required_return, open(fname + '.old', 'w'), indent=4, sort_keys=True)
 
-    def raise_required_return(self, grade):
+    def raise_required_return(self, grade, account):
         adj = (1.0 / self.participation_pct) - 1
-        self.required_return[grade] += adj * self.learning_rate * self.one_bps
+        self.required_return[account][grade] += adj * self.learning_rate * self.one_bps
 
-    def lower_required_return(self, grade):
-        self.required_return[grade] -= self.learning_rate * self.one_bps
-        if self.required_return[grade] < self.min_ira_return:
-            self.required_return[grade] = self.min_ira_return
+    def lower_required_return(self, grade, account):
+        self.required_return[account][grade] -= self.learning_rate * self.one_bps
+        if self.required_return[account][grade] < self.min_return[account]:
+            self.required_return[account][grade] = self.min_return[account]
 
-    def get_required_return(self, grade):
-        if grade in self.required_return.keys():
-            return self.required_return[grade]
+    def get_required_return(self, grade, account):
+        if grade in self.required_return[account].keys():
+            return self.required_return[account][grade]
         else:
             return None
 
     def set_max_investment(self, loan):
         max_ira_invest_amount = 0
         grade = loan['subGradeString']
-        loan['required_return'] = self.get_required_return(grade)
-        if loan['irr'] > loan['required_return']:
-            excess_yield_in_bps = max(0, loan['irr'] - loan['required_return']) / self.one_bps
+        loan['required_ira_return'] = self.get_required_return(grade, 'ira')
+        if loan['irr'] > loan['required_ira_return']:
+            excess_yield_in_bps = max(0, loan['irr'] - loan['required_ira_return']) / self.one_bps
             max_ira_invest_amount =  50 + min(150, excess_yield_in_bps)
-            self.raise_required_return(grade)
+            self.raise_required_return(grade, 'ira')
         else:
-            self.lower_required_return(grade)
-        if self.ira_cash < 5000:
+            self.lower_required_return(grade, 'ira')
+        if self.ira_cash < 10000:
             max_ira_invest_amount *= 0.5
-        if self.ira_cash < 2000:
+        if self.ira_cash < 5000:
             max_ira_invest_amount *= 0.5
         max_ira_investment = 25 * np.floor(max_ira_invest_amount / 25)
         loan['max_ira_investment'] = max_ira_investment
 
+        loan['required_tax_return'] = self.get_required_return(grade, 'tax')
         max_tax_investment = 0
-        if loan['irr_after_tax'] > self.min_tax_return and loan['subGradeString'] < 'C6':
-            if self.tax_cash > 10000:
-                max_tax_investment = 200
-            elif self.tax_cash > 5000:
-                max_tax_investment = 100
+        if loan['required_tax_return'] is not None:
+            if loan['irr_after_tax'] > loan['required_tax_return']:
+                self.raise_required_return(grade, 'tax')
+                if self.tax_cash > 10000:
+                    max_tax_investment = 200 
+                elif self.tax_cash > 5000:
+                    max_tax_investment = 75 
+                else:
+                    max_tax_investment = 25 
             else:
-                max_tax_investment = 50
+                self.lower_required_return(grade, 'tax')
         loan['max_tax_investment'] = max_tax_investment
 
 
@@ -490,8 +501,10 @@ class Loan(dict):
 
         pstr += 'IRR: {:1.2f}%'.format(100*loan['irr'])
         pstr += ' | IRRTax: {:1.2f}%'.format(100*loan['irr_after_tax'])
-        if loan['required_return']:
-            pstr += ' | MinIRR: {:1.2f}%'.format(100*loan['required_return'])
+        if loan['required_ira_return']:
+            pstr += ' | MinIRR: {:1.2f}%'.format(100*loan['required_ira_return'])
+        if loan['required_tax_return']:
+            pstr += ' | MinTax: {:1.2f}%'.format(100*loan['required_tax_return'])
         pstr += ' | IntRate: {}%'.format(loan['intRate'])
         pstr += ' | Default: {:1.2f}%'.format(100*loan['default_risk'])
         pstr += ' | Prepay: {:1.2f}%'.format(100*loan['prepay_risk'])

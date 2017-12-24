@@ -37,7 +37,7 @@ class PathManager(object):
     base_data_file = os.path.join(training_data_dir, 'base_data.csv')
     loanstats_data_file = os.path.join(loanstats_dir, 'loanstats_data.csv')
     employer_data_file = os.path.join(loanstats_dir, 'scraped_data/backoffice_employers.csv')
-    require_returns_json = os.path.join(saved_prod_data_dir, 'required_returns.json')
+    required_returns_json = os.path.join(saved_prod_data_dir, 'required_returns.json')
 
     def __init__(self):
         pass
@@ -74,7 +74,7 @@ class PathManager(object):
         elif item == 'employer_data': 
             return cls.employer_data_file
         elif item == 'required_returns': 
-            return cls.require_returns_json
+            return cls.required_returns_json
         else:
             return -1
 

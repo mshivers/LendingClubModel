@@ -176,8 +176,6 @@ class CurrentBLSData(object):
             data = data.fillna(axis=0, method='ffill')
             labor_force = data.pivot('Period', 'FIPS','CLF')
             unemployed = data.pivot('Period', 'FIPS', 'Unemployed')
-            import pdb
-            pdb.set_trace()
             avg_urate_ttm = dict()
             urate= dict()
             urate_chg = dict()

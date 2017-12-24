@@ -309,8 +309,6 @@ class APIDataParser(object):
                         data[u'{}String'.format(k)] = v
 
             if data[k] is None and k not in self.ok_to_be_null:
-                import pdb
-                pdb.set_trace()
                 print('Field {} has a null value; check api_parser defaults'.format(k))
                 valid = False
        
