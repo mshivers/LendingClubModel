@@ -192,7 +192,7 @@ def build_default_random_forest(df=None):
     joblib.dump(forest, forest_fname, compress=3)
 
 
-def build_default_prepay_forest(df=None):
+def build_prepay_random_forest(df=None):
     print('Building Prepayment Random Forest')
     if df is None:
         df = load_training_data()
@@ -294,7 +294,7 @@ def build_default_prepay_forest(df=None):
 
 
 def update():
-    build_default_random_forest()
+    #build_default_random_forest()
     build_prepay_random_forest()
 
 if __name__ == '__main__':

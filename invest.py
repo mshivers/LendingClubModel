@@ -294,12 +294,13 @@ class Allocator(object):
         max_ira_invest_amount = 0
         grade = loan['subGradeString']
         loan['required_ira_return'] = self.get_required_return(grade, 'ira')
-        if loan['irr'] > loan['required_ira_return']:
-            excess_yield_in_bps = max(0, loan['irr'] - loan['required_ira_return']) / self.one_bps
-            max_ira_invest_amount =  50 + min(150, excess_yield_in_bps)
-            self.raise_required_return(grade, 'ira')
-        else:
-            self.lower_required_return(grade, 'ira')
+        if loan['required_ira_return'] is not None:
+            if loan['irr'] > loan['required_ira_return']:
+                excess_yield_in_bps = max(0, loan['irr'] - loan['required_ira_return']) / self.one_bps
+                max_ira_invest_amount =  50 + min(150, excess_yield_in_bps)
+                self.raise_required_return(grade, 'ira')
+            else:
+                self.lower_required_return(grade, 'ira')
         if self.ira_cash < 10000:
             max_ira_invest_amount *= 0.5
         if self.ira_cash < 5000:
