@@ -135,12 +135,11 @@ class BackOffice(object):
             grade_grp = df.groupby('subGradeString')
             series = {'numFound':grade_grp['id'].count()}
             series['loanAmount'] = grade_grp['loanAmount'].sum()
-            #series['meanIRR'] = grade_grp['irr'].mean()
             series['maxIRR'] = grade_grp['irr'].max()
-            series['minIRA'] = grade_grp['required_ira_return'].mean()
+            series['minIRA'] = grade_grp['required_ira_return'].min()
             series['numIRA'] = grade_grp['is_ira_staged'].sum()
             series['maxIRRTax'] = grade_grp['irr_after_tax'].max()
-            series['minTax'] = grade_grp['required_tax_return'].mean()
+            series['minTax'] = grade_grp['required_tax_return'].min()
             series['numTax'] = grade_grp['is_tax_staged'].sum()
             order = ['numFound', 'loanAmount', 'maxIRR', 'minIRA', 
             'numIRA', 'maxIRRTax', 'minTax', 'numTax']
@@ -151,7 +150,7 @@ class BackOffice(object):
             #formatters['meanIRR'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRRTax'] = lambda x: '{:1.2f}%'.format(100*x)
             formatters['maxIRR'] = lambda x: '{:1.2f}%'.format(100*x)
-            formatters['minIRA'] = lambda x: '{:1.2f}%'.format(100*x)
+            formatters['minIRA'] = lambda x: 'N/A' if np.isnan(x) else '{:1.2f}%'.format(100*x)
             formatters['minTax'] = lambda x: 'N/A' if np.isnan(x) else '{:1.2f}%'.format(100*x)
 
             recent_loan_value = df['loanAmount'].sum()
@@ -247,7 +246,7 @@ class Allocator(object):
     one_bps = 0.0001
     min_return = dict()
     min_return['tax'] = 0.025
-    min_return['ira'] = 0.07
+    min_return['ira'] = 0.06
     participation_pct = 0.20
     learning_rate = 2
 
@@ -288,13 +287,13 @@ class Allocator(object):
         if grade in self.required_return[account].keys():
             return self.required_return[account][grade]
         else:
-            return None
+            return np.nan
 
     def set_max_investment(self, loan):
         max_ira_invest_amount = 0
         grade = loan['subGradeString']
         loan['required_ira_return'] = self.get_required_return(grade, 'ira')
-        if loan['required_ira_return'] is not None:
+        if loan['required_ira_return'] is not np.nan:
             if loan['irr'] > loan['required_ira_return']:
                 excess_yield_in_bps = max(0, loan['irr'] - loan['required_ira_return']) / self.one_bps
                 max_ira_invest_amount =  50 + min(150, excess_yield_in_bps)
@@ -310,7 +309,7 @@ class Allocator(object):
 
         loan['required_tax_return'] = self.get_required_return(grade, 'tax')
         max_tax_investment = 0
-        if loan['required_tax_return'] is not None:
+        if loan['required_tax_return'] is not np.nan:
             if loan['irr_after_tax'] > loan['required_tax_return']:
                 self.raise_required_return(grade, 'tax')
                 if self.tax_cash > 10000:

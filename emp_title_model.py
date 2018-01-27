@@ -25,7 +25,7 @@ M = len(tok_dx)
 N_train = len(is_df)
 X_train = sp.sparse.dok_matrix((N_train,M))
 for row, ct in enumerate(is_df['empTitle'].values):
-    print row, N_train, ct
+    print(row, N_train, ct)
     toks = substrings(ct) 
     for tok in toks:
         if tok in tok_dx.keys():
@@ -46,7 +46,7 @@ if 'df' not in locals().keys():
     for i, ct in enumerate(is_df['empTitle'].values):
         tok_count.update(substrings(ct))
         if i%1000==0:
-            print i, len(tok_count)
+            print(i, len(tok_count))
 
     tok_df = pd.DataFrame(tok_count.most_common(), columns=['tok', 'freq'])
     tok_df = tok_df.sort('freq',ascending=False)
@@ -61,7 +61,7 @@ if 'df' not in locals().keys():
     N_train = len(is_df)
     X_train = sp.sparse.dok_matrix((N_train,M))
     for row, ct in enumerate(is_df['empTitle'].values):
-        print row, N_train, ct
+        print(row, N_train, ct)
         toks = substrings(ct) 
         for tok in toks:
             if tok in tok_dx.keys():
@@ -70,7 +70,7 @@ if 'df' not in locals().keys():
     N_test = len(oos_df)
     X_test = sp.sparse.dok_matrix((N_test,M))
     for row, ct in enumerate(oos_df['clean_title'].values):
-        print row, N_test, ct
+        print(row, N_test, ct)
         toks = substrings(ct) 
         for tok in toks:
             if tok in tok_dx.keys():
@@ -113,15 +113,15 @@ high_pct = y_subtest[prob_default>=high].mean()
 
 num_nonzeros = (clf.coef_!=0).sum()
 pct_nonzero = 100*(clf.coef_!=0).mean()
-print 'C={:1.2f}: {} of {} nonzero or {:1.3f}% -- {:1.2f}% -- '.format(C, 
-        num_nonzeros, max_x, pct_nonzero, 100*(high_pct-low_pct)), 
+print( 'C={:1.2f}: {} of {} nonzero or {:1.3f}% -- {:1.2f}% -- '.format(C, 
+        num_nonzeros, max_x, pct_nonzero, 100*(high_pct-low_pct)), )
 for m in means:
-    print '{:1.2f}% / '.format(100*m),
+    print('{:1.2f}% / '.format(100*m),)
 bads = 100*prob_default[np.where(y_subtest==True)[0]].mean() 
 goods = 100*prob_default[np.where(y_subtest==False)[0]].mean()
-print '{:1.2f}% vs {:1.2f}% ({:1.2f}%) / '.format(bads, goods, bads-goods),
+print('{:1.2f}% vs {:1.2f}% ({:1.2f}%) / '.format(bads, goods, bads-goods),)
       
-print c_tmp.most_common(1)[0][1]
+print(c_tmp.most_common(1)[0][1])
 
 ix=np.where(clf.coef_[0])[0]
 coef= clf.coef_[0][ix]

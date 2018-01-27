@@ -93,7 +93,7 @@ dv = [
      ]
 
 def build_default_random_forest():
-    print 'Building Default Random Forest'
+    print('Building Default Random Forest')
     df = load_training_data()
 
     pctl = 65
@@ -106,7 +106,7 @@ def build_default_random_forest():
     #Check that all the columns exist:
     for col in required_cols:
         if col not in df.columns:
-            print col, 'is not in the cached data'
+            print(col, 'is not in the cached data')
 
     fit_data = df.ix[:,required_cols]
     fit_data = fit_data.dropna()
@@ -156,7 +156,7 @@ def build_default_random_forest():
             'rate_diff']
     res = pd.DataFrame(res_data, columns=cols)
     res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
-    print res
+    print(res)
 
     data_str = ''
     forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
@@ -173,7 +173,7 @@ def build_default_random_forest():
 
     data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
 
-    print data_str
+    print(data_str)
 
     time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
     fname = os.path.join(paths.get_dir('training'), 'default_forest_{}.txt'.format(time_str))
@@ -191,7 +191,7 @@ def build_default_random_forest():
 
 
 def build_prepay_random_forest():
-    print 'Building Prepayment Random Forest'
+    print('Building Prepayment Random Forest')
     df = load_training_data()
     pctl = 50
     iv = '12m_prepay'
@@ -202,7 +202,7 @@ def build_prepay_random_forest():
     #Check that all the columns exist:
     for col in required_cols:
         if col not in df.columns:
-            print col, 'is not in the cached data'
+            print(col, 'is not in the cached data')
 
     fit_data = df.ix[:,dv+extra_cols]
     fit_data = fit_data.dropna()
@@ -254,7 +254,7 @@ def build_prepay_random_forest():
     res = pd.DataFrame(res_data, columns=cols)
     res['decile1_error'] = res['decile1_predicted'] - res['decile1_actual']
     res = res.sort('group')
-    print res
+    print(res)
 
     data_str = ''
     forest_imp = [(dv[i],forest.feature_importances_[i]) for i in forest.feature_importances_.argsort()]
@@ -271,7 +271,7 @@ def build_prepay_random_forest():
 
     data_str += '\n\nOut-of-Bag Score: {}\n'.format(forest.oob_score_)
 
-    print data_str
+    print(data_str)
 
     time_str = dt.now().strftime('%Y_%m_%d_%H_%M_%S')
 
