@@ -65,8 +65,6 @@ open_acc,openAcc
 open_acc_6m,openAcc6m
 open_il_12m,openIl12m
 open_il_24m,openIl24m
-open_il_6m,openIl6m
-open_acc_il,openIl6m
 open_rv_12m,openRv12m
 open_rv_24m,openRv24m
 pct_tl_nvr_dlq,pctTlNvrDlq

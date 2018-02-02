@@ -38,7 +38,7 @@ class LendingClub(object):
         loans = []
         result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
                               headers={'Authorization': self.key,
-                                       'X-LC-LISTING-VERSION': '1.1'},
+                                       'X-LC-LISTING-VERSION': '1.3'},
                               params={'showAll': not new_only})
         if result.status_code == 200:  #success
             result_js = result.json()
@@ -255,7 +255,20 @@ class APIDataParser(object):
                               'annualIncJoint',
                               'housingPayment',
                               'mtgPayment',
-                              'reviewStatusD'
+                              'reviewStatusD',
+                              'secAppFicoRangeLow',
+                              'secAppFicoRangeHigh',
+                              'secAppEarliestCrLine',
+                              'secAppInqLast6Mths',
+                              'secAppMortAcc',
+                              'secAppOpenAcc',
+                              'secAppNumRevAccts',
+                              'secAppChargeoffWithin12Mths',
+                              'secAppCollections12MthsExMed',
+                              'secAppMthsSinceLastMajorDerog',
+                              'revolBalJoint',
+                              'secAppOpenActIl'
+
                               ]
         self.required_nonzero = [
                                  'annualInc', 
