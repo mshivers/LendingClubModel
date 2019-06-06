@@ -296,13 +296,13 @@ class Allocator(object):
         if loan['required_ira_return'] is not np.nan:
             if loan['irr'] > loan['required_ira_return']:
                 excess_yield_in_bps = max(0, loan['irr'] - loan['required_ira_return']) / self.one_bps
-                max_ira_invest_amount =  50 + min(150, excess_yield_in_bps)
+                max_ira_invest_amount =  300 + min(500, 2*excess_yield_in_bps)
                 self.raise_required_return(grade, 'ira')
             else:
                 self.lower_required_return(grade, 'ira')
         if self.ira_cash < 10000:
             max_ira_invest_amount *= 0.5
-        if self.ira_cash < 5000:
+        if self.ira_cash < 3000:
             max_ira_invest_amount *= 0.5
         max_ira_investment = 25 * np.floor(max_ira_invest_amount / 25)
         loan['max_ira_investment'] = max_ira_investment
@@ -314,10 +314,10 @@ class Allocator(object):
                 self.raise_required_return(grade, 'tax')
                 if self.tax_cash > 10000:
                     max_tax_investment = 200 
-                elif self.tax_cash > 5000:
-                    max_tax_investment = 75 
+                elif self.tax_cash > 3000:
+                    max_tax_investment = 100 
                 else:
-                    max_tax_investment = 25 
+                    max_tax_investment = 50 
             else:
                 self.lower_required_return(grade, 'tax')
         loan['max_tax_investment'] = max_tax_investment
@@ -361,13 +361,15 @@ class PortfolioManager(object):
                 self.quant.run_models(loan)
                 self.allocator.set_max_investment(loan)                    
                 self.backoffice.track(loan)
-                ira_staged += self.maybe_stage_ira_order(loan)    
-                tax_staged += self.maybe_stage_tax_order(loan)    
+                ira_staged += self.maybe_submit_ira_order(loan)    
+                tax_staged += self.maybe_submit_tax_order(loan)    
                 loan.print_description() 
+        '''
         if ira_staged:
             self.ira_account.submit_staged_orders()
         if tax_staged:
             self.tax_account.submit_staged_orders()
+        '''
 
     def maybe_submit_ira_order(self, loan):
         amount_staged = 0
@@ -376,6 +378,19 @@ class PortfolioManager(object):
             amount_staged = self.ira_account.submit_new_order(loan.id, amount_to_stage)
             loan['staged_ira_amount'] += amount_staged
             loan['ira_invested_amount'] += amount_staged
+            if amount_staged > 0: 
+                print('Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']))
+            else:
+                print('Attempted to submit ${} for {}... FAILED'.format(amount_to_stage, loan['empTitle']))
+        return amount_staged
+         
+    def maybe_submit_tax_order(self, loan):
+        amount_staged = 0
+        amount_to_stage = self.backoffice.stage_amount(loan, 'tax')
+        if amount_to_stage > 0:
+            amount_staged = self.tax_account.submit_new_order(loan.id, amount_to_stage)
+            loan['staged_tax_amount'] += amount_staged
+            loan['tax_invested_amount'] += amount_staged
             if amount_staged > 0: 
                 print('Submitted ${} for loan {} for {}'.format(amount_staged, loan.id, loan['empTitle']))
             else:
@@ -444,7 +459,7 @@ class PortfolioManager(object):
         end = start + td(minutes=minutes)
         while True: 
             self.search_for_yield()
-            self.get_staged_employers()
+            #self.get_staged_employers()
             print(self.backoffice.report())
             if dt.now() > end:
                 break
@@ -455,7 +470,7 @@ class PortfolioManager(object):
             #self.attempt_to_restage_ira_loans()
         print('Done trying!')
         emaillib.send_email(self.backoffice.report()) 
-        self.get_remaining_employers()
+        #self.get_remaining_employers()
 
 
 class Loan(dict):

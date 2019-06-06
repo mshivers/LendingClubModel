@@ -21,6 +21,6 @@ In constants.py, in the class variables for the PathManager class, update the
 "python build_all.py" builds all the random forest models.
 
 To push to prod, just copy entire training_data directory into a new directory,
-and make sure the model_dir path in lc.py::main() points there.
+and make sure the model_dir path in run_lc.py::main() points there.
 
 

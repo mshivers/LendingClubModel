@@ -134,9 +134,10 @@ class Session(object):
                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12) AppleWebKit/602.1.50 (KHTML, like Gecko) Version/10.0 Safari/602.1.50'
                  ] 
         self.__session = requests.Session()
-        self.__session.headers = {
-            'Referer': 'https://www.lendingclub.com/',
-            'User-Agent': agents[2]  }
+        self.__session.headers = requests.utils.default_headers()
+        #self.__session.headers = {
+        #    'Referer': 'https://www.lendingclub.com/',
+        #    'User-Agent': agents[2]  }
         # Set last request time to now
         self.last_request_time = time.time()
 

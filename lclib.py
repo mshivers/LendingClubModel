@@ -6,6 +6,7 @@ import requests
 import json
 import utils 
 import numpy as np
+import time
 from time import sleep
 from bs4 import BeautifulSoup
 
@@ -20,7 +21,14 @@ class LendingClub(object):
         self._pass = p.get_pass(account)
         self.session = Session(email=self.email, password=self._pass) 
         self.attempt_to_authenticate()
-            
+        self.last_request_time = 0
+           
+    def maybe_sleep(self):
+        sleep(max(0, self.last_request_time + 1 - time.time())) #only 1 call/second max
+
+    def update_last_request_time(self):
+        self.last_request_time = time.time()
+
     def attempt_to_authenticate(self):
         count = 1
         success = False
@@ -34,9 +42,15 @@ class LendingClub(object):
                 sleep(3) 
             count += 1
 
+    def get(self, url, headers, params={}):
+        self.maybe_sleep()
+        result = requests.get(url, headers=headers, params=params)
+        self.update_last_request_time()
+        return result
+
     def get_listed_loans(self, new_only=True):
         loans = []
-        result = requests.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
+        result = self.get('https://api.lendingclub.com/api/investor/v1/loans/listing', 
                               headers={'Authorization': self.key,
                                        'X-LC-LISTING-VERSION': '1.3'},
                               params={'showAll': not new_only})
@@ -50,7 +64,7 @@ class LendingClub(object):
         cash = -1
         url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/availablecash'.format(self.id)
         try:
-            result = requests.get(url, headers={'Authorization': self.key})
+            result = self.get(url, headers={'Authorization': self.key})
             if result.status_code == 200:  #success
                 result_js = result.json()
                 if 'availableCash' in result_js.keys():
@@ -63,7 +77,7 @@ class LendingClub(object):
         summary = {}
         url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/summary'.format(self.id)
         try:
-            result = requests.get(url, headers={'Authorization': self.key})
+            result = self.get(url, headers={'Authorization': self.key})
             if result.status_code == 200:  #success
                 summary = result.json()
         except:
@@ -73,7 +87,7 @@ class LendingClub(object):
     def get_notes_owned(self):
         notes = []
         url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/detailednotes'.format(self.id)
-        result = requests.get(url, headers={'Authorization': self.key})
+        result = self.get(url, headers={'Authorization': self.key})
         if result.status_code == 200:  #success
             result_js = result.json()
             if 'myNotes' in result_js.keys():
@@ -83,7 +97,9 @@ class LendingClub(object):
     def submit_new_order(self, loan_id, amount):
         invested_amount = 0
         url = 'https://api.lendingclub.com/api/investor/v1/accounts/{}/orders'.format(self.id) 
-        headers={'Authorization': self.key, 'Content-Type': 'application/json'}
+        headers = {} #requests.utils.default_headers()
+        headers['Authorization'] = self.key
+        headers['Content-type'] = 'application/json'
         payload={'aid':self.id,
                 'orders':[
                   {
@@ -92,13 +108,21 @@ class LendingClub(object):
                    }]
                }
                               
-        result = requests.post(url, headers=headers, data=json.dumps(payload))
-        if result.status_code == 200:  #success
-            result_js = result.json()
-            if 'orderConfirmations' in result_js.keys():
-                invested_amount = result_js['orderConfirmations'][0]['investedAmount']
+        try:
+            self.maybe_sleep()
+            result = requests.post(url, headers=headers, data=json.dumps(payload))
+            self.update_last_request_time()
+            if result.status_code == 200:  #success
+                result_js = result.json()
+                if 'orderConfirmations' in result_js.keys():
+                    invested_amount = result_js['orderConfirmations'][0]['investedAmount']
+            else:
+                print(result.json())
+        except Exception as e:
+            print(e)
+            print('Attempting to authenticate again')
+            self.attempt_to_authenticate()
         return invested_amount
-
 
     def stage_new_order(self, loan_id, amount):
         amount_staged = 0
@@ -111,9 +135,9 @@ class LendingClub(object):
         try:
             response = self.session.get('/data/portfolio', query=payload)
             json_response = response.json()
-        except:
-            log.write('{}: Failed prestage orders\n'.format(dt.now()))
+        except Exception as e:
             print('\nFailed to prestage order {}\n'.format(loan_id))
+            print(e)
             return 0
 
         if json_response['result']=='success':
@@ -141,7 +165,8 @@ class LendingClub(object):
             response = self.session.post('/browse/loanDetailAj.action', data=payload)
             detail = response.json()
             return detail 
-        except:
+        except Exception as e:
+            print(e)
             return -1
 
     def get_employer_name(self, loan_id):

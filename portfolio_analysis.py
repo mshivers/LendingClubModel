@@ -82,6 +82,7 @@ class PortfolioAnalysis(object):
         invested = df.groupby('issueMth')['noteAmount'].sum()
         by_status = by_status.div(invested, axis=0)
         by_status['invested'] = invested
+        by_status['Fully Paid'] = df.groupby(['issueMth', 'loanStatus'])['principalReceived'].sum().unstack()['Fully Paid'] / invested
         return by_status
 
 
@@ -186,13 +187,18 @@ def total_written_off(notes, num_months=None):
 def total_invested(notes):
     return sum([n['noteAmount'] for n in notes if n['issueDate'] is not None])
 
+def issued_notes(notes):
+    return [n for n in notes if n['issueDate'] is not None]
+
 def average_rate(notes):
-    issued_notes = [n for n in notes if n['issueDate'] is not None]
+    issued_notes = issued_notes(notes)
     return np.sum([n['interestRate'] * n['noteAmount'] for n in issued_notes]) / total_invested(issued_notes)
     
-
 def current_balance(notes):
-    return sum([n['principalPending'] for n in notes if n['issueDate'] is not None])
+    return sum([n['principalPending'] for n in notes if n['issueDate'] is not None
+                                                        and n['loanStatus'] != 'Charged Off'
+                                                        and n['loanStatus'] != 'Default'
+                                                        and n['loanStatus'] != 'Fully Paid'])
 
 def issue_months(notes):
     return sorted(list(set([n['issueDate'][:7] for n in notes if n['issueDate'] is not None])))
@@ -251,9 +257,10 @@ def initial_returns(notes, num_months):
         annualization = 12.0 / holding_mths
         exp_ret = ((i-e)/p) * annualization
         act_ret = ((i-d)/p) * annualization
-        out.append((m, holding_mths, p,c, r, int(i), int(d), int(e), act_ret, exp_ret))
+        exp_ret_after_tax = (i/2 - e)/p * annualization
+        out.append((m, holding_mths, p,c, r, int(i), int(d), int(e), act_ret, exp_ret, exp_ret_after_tax))
     cols = ['month', 'num_mths', 'invested', 'outstanding', 'avgRate', 'interest', 'defaults', 
-            'exp_defaults', 'act_return', 'exp_return']
+            'exp_defaults', 'act_return', 'exp_return', 'exp_return_after_tax']
     df = pd.DataFrame(data=out, columns=cols) 
     return df 
 
